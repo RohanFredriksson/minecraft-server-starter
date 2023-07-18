@@ -1,72 +1,17 @@
-const net = require('net');
-const leb128 = require('leb128');
+const mc = require('minecraft-protocol');
+const server = mc.createServer({
+    'online-mode': true,   // optional
+    encryption: true,      // optional
+    host: '0.0.0.0',       // optional
+    port: 25565,           // optional
+    version: '1.20.1'
+});
 
-class Server {
+server.on('connection', function(client) {
+    console.log("CONNECTION");
+});
 
-    response;
-
-    constructor(port, response) {
-        this.response = response;
-
-        this.server = net.createServer(conn => this.connect(conn));
-        this.server.listen(port);
-    }
-
-    connect(conn) {
-        conn.on('data', data => this.data(conn, data));
-    }
-
-    data(conn, data) {
-        if (data.equals(Buffer.from('0100', 'hex'))) {
-            conn.write(this.formatResponse());
-        } else if (data.subarray(1, 2).equals(Buffer.from('01', 'hex'))) {
-            conn.write(this.formatPong(data.subarray(2)));
-            conn.destroy();
-        }
-    }
-
-    formatResponse() {
-        const respBuffer = Buffer.from(JSON.stringify(this.response));
-        const respLengthBuffer = leb128.signed.encode(respBuffer.length);
-        const packetLengthBuffer = leb128.signed.encode(respBuffer.length + respLengthBuffer.length + 1);
-
-        return Buffer.concat(
-            [
-                packetLengthBuffer,
-                Buffer.from('00', 'hex'), 
-                respLengthBuffer, 
-                respBuffer
-            ]
-        );
-    }
-
-    formatPong(longBuffer) {
-        const packetLengthBuffer = leb128.signed.encode(longBuffer.length + 1);
-
-        return Buffer.concat(
-            [
-                packetLengthBuffer,
-                Buffer.from('01', 'hex'),
-                longBuffer
-            ]
-        );
-    }
-
-}
-
-const response = {
-    "version": {
-        "name": "1.19",
-        "protocol": 759 //1.19 protocol
-    },
-    "players": {
-        "max": 100,
-        "online": 0
-    },
-    "description": {
-        "text": "Minecraft Server Motd"
-    },
-    "favicon": "data:image/png;base64,<data>"
-};
-
-new Server(8124, response);
+server.on('login', function(client) {
+    console.log("LOGIN");
+    client.end("hes cheeeeeating");
+});

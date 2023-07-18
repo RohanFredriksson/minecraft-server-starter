@@ -9,11 +9,11 @@
   },
   "author": "Rohan Fredriksson",
   "license": "MIT",
-  "dependencies": {
-    "leb128": "^0.0.5"
-  },
   "repository": {
     "type": "git",
     "url": "github:RohanFredriksson/minecraft-server-starter"
+  },
+  "dependencies": {
+    "minecraft-protocol": "^1.43.2"
   }
 }
