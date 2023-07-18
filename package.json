@@ -1,0 +1,19 @@
+{
+  "name": "minecraft-server-starter",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js"
+  },
+  "author": "Rohan Fredriksson",
+  "license": "MIT",
+  "dependencies": {
+    "leb128": "^0.0.5"
+  },
+  "repository": {
+    "type": "git",
+    "url": "github:RohanFredriksson/minecraft-server-starter"
+  }
+}
