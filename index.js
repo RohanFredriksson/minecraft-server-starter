@@ -3,7 +3,7 @@ const server = mc.createServer({
     'online-mode': true,   // optional
     encryption: true,      // optional
     host: '0.0.0.0',       // optional
-    port: 25565,           // optional
+    port: 25566,           // optional
     version: '1.20.1'
 });
 
@@ -12,6 +12,6 @@ server.on('connection', function(client) {
 });
 
 server.on('login', function(client) {
-    console.log("LOGIN");
-    client.end("hes cheeeeeating");
+    console.log(client.uuid);
+    client.end("closed connection");
 });
