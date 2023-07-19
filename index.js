@@ -52,6 +52,7 @@ class MinecraftServer {
             process.stdin.unpipe(this.process.stdin);
             proxy.set(25565, 25566);
         });   
+
     }
 
     stop() {
@@ -122,7 +123,15 @@ server.on('login', async function(client) {
             proxy.set(25565, 25567);
 
             // See if we can sleep the server.
-            // TODO STOP SERVER IF NO ONE HAS BEEN ON IN FIVE MINUTES
+            count = 0
+            while (true) {
+                data = await ping();
+                if (!data.online) {break;}
+                if (data.players.online == 0) {count++;}
+                else {count = 0;}
+                if (count == 3) {minecraft.stop(); break;}
+                await new Promise((resolve) => setTimeout(resolve, 60000));
+            }
 
         }
 
