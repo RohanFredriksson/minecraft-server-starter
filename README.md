@@ -16,7 +16,7 @@ To use the server starter:
 ```
 npm install
 ```
-3. Construct your own game components by creating new classes inheriting from the Component Class.
+3. 
 ```
 node index.js
 ```
