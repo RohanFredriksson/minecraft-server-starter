@@ -14,7 +14,6 @@
     "url": "github:RohanFredriksson/minecraft-server-starter"
   },
   "dependencies": {
-    "minecraft-protocol": "^1.43.2",
-    "which": "^3.0.1"
+    "minecraft-protocol": "^1.43.2"
   }
 }

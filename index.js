@@ -1,9 +1,5 @@
 const mc = require('minecraft-protocol');
-const which = require('which');
 const child_process = require('child_process');
-
-let redir; try {redir = which.sync('redir');} catch (error) {console.error('redir executable not found.'); process.exit(1);}
-//let java;  try {java = which.sync('java');}   catch (error) {console.error('java executable not found.');  process.exit(1);}
 
 class Proxy {
 
@@ -14,7 +10,7 @@ class Proxy {
 
     set(input, output) {
         this.destroy();
-        this.process = child_process.spawn(redir, [`--lport=${input}`, `--cport=${output}`]);
+        this.process = child_process.spawn('redir', [`--lport=${input}`, `--cport=${output}`]);
     }
 
     destroy() {
@@ -24,6 +20,13 @@ class Proxy {
 }
 
 const proxy = new Proxy(25565, 25566);
+
+var state = 'waiting';
+
+async function ping() {
+    try {result = await mc.ping({host: '127.0.0.1', port: 25567}); result.online = true; return result;} 
+    catch {result = {online: false}; return result;}
+}
 
 const server = mc.createServer({
     'online-mode': true,
@@ -37,9 +40,35 @@ server.on('connection', function(client) {
 
 });
 
-server.on('login', function(client) {
-    client.end("Disconnected");
+server.on('login', async function(client) {
+
+    data = await ping();
+    if (!data.online) {
+        
+        client.end("Server waking up, please rejoin in a minute :)");
+        if (state == 'waiting') {
+        
+            // Start the server.
+            state = 'starting';
+            //p = child_process.spawn('screen', ['-dmS', 'minecraft', 'java', '-Xms1G', '-Xmx1G', '-jar', 'server.jar', 'nogui']);
+            child_process.spawn('java', ['-Xms1G', '-Xmx1G', '-jar', 'server.jar', 'nogui']);
+
+            // Wait for the server to start.
+            while (true) {
+                data = await ping();
+                if (data.online) {break;}
+                await new Promise((resolve) => setTimeout(resolve, 5000));
+            }
+
+            // Swap the proxy to the server.
+            state = 'started';
+            proxy.set(25565, 25567);
+
+            // See if we can sleep the server.
+
+        }
+
+    }
+
+    client.end("Server is already up.");
 });
-
-
-
