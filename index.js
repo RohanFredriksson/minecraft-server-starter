@@ -1,21 +1,9 @@
 const mc = require('minecraft-protocol');
 const child_process = require('child_process');
 
-class MinecraftServer {
-
-    constructor() {
-        this.process = null;
-    }
-
-    start() {
-        this.stop();
-        this.process = child_process.spawn('java', ['-Xms1G', '-Xmx1G', '-jar', 'server.jar', 'nogui']);
-    }
-
-    stop() {
-        if (this.process != null) {this.process.stdin.write('stop\n'); this.process.stdin.end();}
-    }
-
+function line() {
+    try {console.log('-'.repeat(process.stdout.columns));}
+    catch {console.log('-'.repeat(80));}
 }
 
 class Proxy {
@@ -36,13 +24,55 @@ class Proxy {
 
 }
 
-const proxy = new Proxy(25565, 25566);
-const minecraft = new MinecraftServer();
+line();
+console.log('Server sleeping. Waiting for login attempt...')
 var state = 'waiting';
+const proxy = new Proxy(25565, 25566);
 
-function handle(signal) {
-    minecraft.process.on('exit', (c, s) => {process.exit(0);});   
-    minecraft.stop();
+class MinecraftServer {
+
+    constructor() {
+        this.process = null;
+    }
+
+    start() {
+
+        this.stop();
+        line();
+        this.process = child_process.spawn('java', ['-Xms1G', '-Xmx1G', '-jar', 'server.jar', 'nogui']);
+        
+        process.stdin.pipe(this.process.stdin);
+        this.process.stdout.pipe(process.stdout);
+        this.process.stderr.pipe(process.stderr);
+
+        this.process.on('exit', (c, s) => {
+            line();
+            console.log('Server sleeping. Waiting for login attempt...')
+            state = 'waiting';
+            process.stdin.unpipe(this.process.stdin);
+            proxy.set(25565, 25566);
+        });   
+    }
+
+    stop() {
+        if (this.process != null) {
+            this.process.stdin.write('stop\n'); 
+            this.process.stdin.end();
+        }
+    }
+
+    destroy() {
+        if (this.process != null) {this.process.kill();}
+    }
+
+}
+
+const minecraft = new MinecraftServer();
+
+async function handle(signal) {
+    proxy.destroy();
+    minecraft.destroy();
+    process.exit(0);
 }
 
 process.on('SIGINT', () => handle('SIGINT'));
@@ -71,8 +101,11 @@ server.on('login', async function(client) {
     if (!data.online) {
         
         client.end("Server waking up... Please rejoin in few seconds.");
-        if (state == 'waiting') {
+        if (state != 'starting') {
         
+            // Log the start up.
+            console.log(`${client.username} started the server.`);
+
             // Start the server.
             state = 'starting';
             minecraft.start();
@@ -89,6 +122,7 @@ server.on('login', async function(client) {
             proxy.set(25565, 25567);
 
             // See if we can sleep the server.
+            // TODO STOP SERVER IF NO ONE HAS BEEN ON IN FIVE MINUTES
 
         }
 
