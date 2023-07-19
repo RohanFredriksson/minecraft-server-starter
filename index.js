@@ -1,6 +1,23 @@
 const mc = require('minecraft-protocol');
 const child_process = require('child_process');
 
+class MinecraftServer {
+
+    constructor() {
+        this.process = null;
+    }
+
+    start() {
+        this.stop();
+        this.process = child_process.spawn('java', ['-Xms1G', '-Xmx1G', '-jar', 'server.jar', 'nogui']);
+    }
+
+    stop() {
+        if (this.process != null) {this.process.stdin.write('stop\n'); this.process.stdin.end();}
+    }
+
+}
+
 class Proxy {
 
     constructor(input, output) {
@@ -20,13 +37,16 @@ class Proxy {
 }
 
 const proxy = new Proxy(25565, 25566);
-
+const minecraft = new MinecraftServer();
 var state = 'waiting';
 
-async function ping() {
-    try {result = await mc.ping({host: '127.0.0.1', port: 25567}); result.online = true; return result;} 
-    catch {result = {online: false}; return result;}
+function handle(signal) {
+    minecraft.process.on('exit', (c, s) => {process.exit(0);});   
+    minecraft.stop();
 }
+
+process.on('SIGINT', () => handle('SIGINT'));
+process.on('SIGTERM', () => handle('SIGTERM'));
 
 const server = mc.createServer({
     'online-mode': true,
@@ -42,16 +62,20 @@ server.on('connection', function(client) {
 
 server.on('login', async function(client) {
 
+    async function ping() {
+        try {result = await mc.ping({host: '127.0.0.1', port: 25567}); result.online = true; return result;} 
+        catch {result = {online: false}; return result;}
+    }
+
     data = await ping();
     if (!data.online) {
         
-        client.end("Server waking up, please rejoin in a minute :)");
+        client.end("Server waking up... Please rejoin in few seconds.");
         if (state == 'waiting') {
         
             // Start the server.
             state = 'starting';
-            //p = child_process.spawn('screen', ['-dmS', 'minecraft', 'java', '-Xms1G', '-Xmx1G', '-jar', 'server.jar', 'nogui']);
-            child_process.spawn('java', ['-Xms1G', '-Xmx1G', '-jar', 'server.jar', 'nogui']);
+            minecraft.start();
 
             // Wait for the server to start.
             while (true) {
@@ -68,7 +92,12 @@ server.on('login', async function(client) {
 
         }
 
+    } 
+    
+    else {
+        client.end("Server has already started.");
+        state = 'started';
+        proxy.set(25565, 25567);
     }
 
-    client.end("Server is already up.");
 });
