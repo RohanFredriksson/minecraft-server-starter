@@ -1,4 +1,5 @@
 const fs = require('fs');
+const sharp = require('sharp');
 const mc = require('minecraft-protocol');
 const child_process = require('child_process');
 const properties_parser = require('properties-parser');
@@ -164,3 +165,11 @@ server.on('login', async function(client) {
 });
 
 server['motd'] = starter_properties['motd'];
+
+if (fs.existsSync(starter_properties['favicon'])) {
+    sharp(starter_properties['favicon'])
+    .resize(64, 64)
+    .toBuffer()
+    .then((buffer) => {server['favicon'] = buffer.toString('base64');})
+    .catch((err) => {});
+}
