@@ -1,24 +1,25 @@
 # Minecraft Server Starter
 
 ## Description
-Awesome tool
+This is a minecraft server tool built for POSIX systems, that automatically starts and stops minecraft servers depending on user activity. 
 
-## Dependencies
-The engine requires the following dependencies:
-- [temp](https://github.com/RohanFredriksson/RohanFredriksson.git)
-
+## Requirements
+This codebase has the requires the following programs to function:
+- [java](https://www.java.com/en/)
+- [redir](https://linux.die.net/man/1/redir)
+- [nodejs](https://nodejs.org/en)
+- [npm](https://www.npmjs.com/)
 
 ## Getting Started
 To use the server starter:
-
-1. 
-2. 
+1. Ensure the required programs are installed. These programs are listed above.
+2. Clone or download this repository. This can be achieved with the following command.
+```bash
+git clone https://github.com/RohanFredriksson/minecraft-server-starter.git
+```
+3. Install all required node modules using the following command.
 ```
 npm install
-```
-3. 
-```
-node index.js
 ```
 
 ## Example
