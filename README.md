@@ -1,7 +1,7 @@
 # Minecraft Server Starter
 
 ## Description
-This is a Minecraft Java Edition server tool built for POSIX systems, that can automatically start and stop a Minecraft server depending on user activity. 
+This is a Minecraft Java Edition server tool built for POSIX systems, that can automatically start and stop a Minecraft server depending on user activity. This allows for an energy-efficient approach to running Minecraft Servers which have 24-7 uptime and inconsistent user activity. When players are not on the server, the server sleeps and when a player decides to join, the server starts back up and is running within 30 seconds.
 
 ## Requirements
 This codebase has the requires the following programs to function:
@@ -44,13 +44,13 @@ server-port=25567 <--
 .
 .
 ```
-## Example
-```javascript
+7. Now we should be able to run the server using the default parameters. To run the server run the following command:
+```bash
+node index.js
 ```
+The will start the server in sleep mode. To start the server connect to the Minecraft, log in to the server using the Minecraft Client. This will then begin starting the server. Log in to the server again and it should be running ready to play on! Feel free to tune the parameters to your liking by altering the values in the **.properties** files.
+## Screenshots
 
-## Features
-Minecraft Server Starter provides the following features:
-- tmp
 
 ## Contributions
 Contributions are welcome! If you find any bugs or have suggestions for improvements, feel free to open an issue or submit a pull request on GitHub.
