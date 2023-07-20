@@ -3,6 +3,14 @@ const mc = require('minecraft-protocol');
 const child_process = require('child_process');
 const properties_parser = require('properties-parser');
 
+// Read server properties
+const server_properties = properties_parser.parse(fs.readFileSync('server.properties', 'utf-8'));
+const starter_properties = properties_parser.parse(fs.readFileSync('starter.properties', 'utf-8'));
+server_properties['server-port'] = Number(server_properties['server-port']);
+starter_properties['server-port'] = Number(starter_properties['server-port']);
+starter_properties['starter-port'] = Number(starter_properties['starter-port']);
+starter_properties['timeout'] = Number(starter_properties['timeout']);
+
 // Prints a line.
 function line() {
     try {console.log('-'.repeat(process.stdout.columns));}
@@ -36,10 +44,13 @@ class MinecraftServer {
     }
 
     start() {
-
+        
         this.stop();
         line();
-        this.process = child_process.spawn('java', ['-Xms1G', '-Xmx1G', '-jar', 'server.jar', 'nogui']);
+
+        const args = starter_properties['start-command'].split(/\s+/);
+        const command = args.shift();
+        this.process = child_process.spawn(command, args);
         
         process.stdin.pipe(this.process.stdin);
         this.process.stdout.pipe(process.stdout);
@@ -50,7 +61,7 @@ class MinecraftServer {
             console.log('Server sleeping. Waiting for login attempt...')
             state = 'waiting';
             process.stdin.unpipe(this.process.stdin);
-            proxy.set(25565, 25566);
+            proxy.set(starter_properties['server-port'], starter_properties['starter-port']);
         });   
 
     }
@@ -82,7 +93,7 @@ process.on('SIGTERM', () => handle('SIGTERM'));
 line();
 console.log('Server sleeping. Waiting for login attempt...')
 var state = 'waiting';
-const proxy = new Proxy(25565, 25566);
+const proxy = new Proxy(starter_properties['server-port'], starter_properties['starter-port']);
 const minecraft = new MinecraftServer();
 
 // Configure the server starter.
@@ -90,8 +101,8 @@ const server = mc.createServer({
     'online-mode': true,
     encryption: true,
     host: '0.0.0.0',
-    port: 25566,
-    version: '1.20.1'
+    port: starter_properties['starter-port'],
+    version: starter_properties['version']
 });
 
 server.on('connection', function(client) {
@@ -101,7 +112,7 @@ server.on('connection', function(client) {
 server.on('login', async function(client) {
 
     async function ping() {
-        try {result = await mc.ping({host: '127.0.0.1', port: 25567}); result.online = true; return result;} 
+        try {result = await mc.ping({host: '127.0.0.1', port: server_properties['server-port']}); result.online = true; return result;} 
         catch {result = {online: false}; return result;}
     }
 
@@ -127,7 +138,7 @@ server.on('login', async function(client) {
 
             // Swap the proxy to the server.
             state = 'started';
-            proxy.set(25565, 25567);
+            proxy.set(starter_properties['server-port'], server_properties['server-port']);
 
             // See if we can sleep the server.
             count = 0
@@ -136,7 +147,7 @@ server.on('login', async function(client) {
                 if (!data.online) {break;}
                 if (data.players.online == 0) {count++;}
                 else {count = 0;}
-                if (count == 3) {minecraft.stop(); break;}
+                if (count >= starter_properties['timeout']) {minecraft.stop(); break;}
                 await new Promise((resolve) => setTimeout(resolve, 60000));
             }
 
@@ -147,7 +158,9 @@ server.on('login', async function(client) {
     else {
         client.end("Server has already started.");
         state = 'started';
-        proxy.set(25565, 25567);
+        proxy.set(starter_properties['server-port'], server_properties['server-port']);
     }
 
 });
+
+server['motd'] = starter_properties['motd'];
