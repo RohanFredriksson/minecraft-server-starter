@@ -1,7 +1,7 @@
 # Minecraft Server Starter
 
 ## Description
-This is a Minecraft Java Edition server tool built for POSIX systems, that can automatically start and stop a Minecraft server depending on user activity. This allows for an energy-efficient approach to running Minecraft Servers which have 24-7 uptime and inconsistent user activity. When players are not on the server, the server sleeps and when a player decides to join, the server starts back up and is running within 30 seconds.
+This is a Minecraft Java Edition server tool built for POSIX systems, that can automatically start and stop a Minecraft server depending on user activity. This allows for an energy-efficient approach to running Minecraft Servers which have 24/7 uptime and inconsistent user activity. When players are not on the server, the server sleeps and when a player decides to join, the server starts back up and is running within 30 seconds.
 
 ## Requirements
 This codebase has the requires the following programs to function:
