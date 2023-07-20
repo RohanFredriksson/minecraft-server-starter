@@ -1,11 +1,15 @@
+const fs = require('fs');
 const mc = require('minecraft-protocol');
 const child_process = require('child_process');
+const properties_parser = require('properties-parser');
 
+// Prints a line.
 function line() {
     try {console.log('-'.repeat(process.stdout.columns));}
     catch {console.log('-'.repeat(80));}
 }
 
+// Class that handles TCP proxy child process.
 class Proxy {
 
     constructor(input, output) {
@@ -24,11 +28,7 @@ class Proxy {
 
 }
 
-line();
-console.log('Server sleeping. Waiting for login attempt...')
-var state = 'waiting';
-const proxy = new Proxy(25565, 25566);
-
+// Class that handles Minecraft Server child process.
 class MinecraftServer {
 
     constructor() {
@@ -68,8 +68,7 @@ class MinecraftServer {
 
 }
 
-const minecraft = new MinecraftServer();
-
+// Destroy all children on termination.
 async function handle(signal) {
     proxy.destroy();
     minecraft.destroy();
@@ -79,6 +78,14 @@ async function handle(signal) {
 process.on('SIGINT', () => handle('SIGINT'));
 process.on('SIGTERM', () => handle('SIGTERM'));
 
+// Initialise the state.
+line();
+console.log('Server sleeping. Waiting for login attempt...')
+var state = 'waiting';
+const proxy = new Proxy(25565, 25566);
+const minecraft = new MinecraftServer();
+
+// Configure the server starter.
 const server = mc.createServer({
     'online-mode': true,
     encryption: true,
