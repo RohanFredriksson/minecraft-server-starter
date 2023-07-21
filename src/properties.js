@@ -14,7 +14,9 @@ if (!('starter-port' in starter)) {throw new Error('Starter port not specified i
 
 // Fill in default values for optional properties
 if (!('timeout' in starter)) {starter['timeout'] = 5;}
-if (!('motd' in starter)) {starter['motd'] = 'Server currently sleeping.\nPlease login to wake me up!';}
+if (!('waiting-motd' in starter)) {starter['waiting-motd'] = 'Server currently sleeping.\nPlease login to wake me up!';}
+if (!('starting-motd' in starter)) {starter['starting-motd'] = 'Server is waking up.\nPlease wait a few seconds.';}
+if (!('starting-reason' in starter)) {starter['starting-reason'] = 'Server is waking up. Please wait a few seconds.';}
 
 // Type cast the numbers to number types.
 server['server-port'] = parseInt(server['server-port'], 10);
@@ -35,6 +37,8 @@ properties['minecraft-server-starter-port'] = starter['starter-port'];
 properties['version'] = starter['version'];
 properties['command'] = starter['command'];
 properties['timeout'] = starter['timeout'];
-properties['motd'] = starter['motd'];
+properties['waiting-motd'] = starter['waiting-motd'];
+properties['starting-motd'] = starter['starting-motd'];
+properties['starting-reason'] = starter['starting-reason'];
 
 module.exports = { properties: properties};

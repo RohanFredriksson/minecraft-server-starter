@@ -40,6 +40,7 @@ server.on('exit', (server) => {
     console.log(line);
     console.log('Server sleeping. Waiting for login attempt...')
     state = 'waiting';
+    starter['motd'] = properties['waiting-motd'];
     process.stdin.unpipe(server.process.stdin);
     proxy.set(properties['server-port'], properties['minecraft-server-starter-port']);
 });
@@ -50,7 +51,7 @@ const starter = mc.createServer({
     host: '0.0.0.0',
     port: properties['minecraft-server-starter-port'],
     version: properties['version'],
-    motd: properties['motd']
+    motd: properties['waiting-motd']
 });
 
 starter.on('connection', function(client) {
@@ -59,7 +60,8 @@ starter.on('connection', function(client) {
 
 starter.on('login', async function(client) {
 
-    client.end("Server waking up... Please rejoin in few seconds.");
+    client.end(properties['starting-reason']);
+    starter['motd'] = properties['starting-motd'];
 
     const data = await ping('127.0.0.1', properties['minecraft-server-port']);
     if (!data.online && state == 'waiting') {
