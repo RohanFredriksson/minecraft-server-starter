@@ -23,15 +23,13 @@ server.on('ready', async (server) => {
     state = 'started';
     proxy.set(properties['server-port'], properties['minecraft-server-port']);
 
-    // See if we can sleep the server.
     var count = 0
     while (true) {
+        await new Promise((resolve) => setTimeout(resolve, 60000));
         data = await ping('127.0.0.1', properties['minecraft-server-port']);
         if (!data.online) {break;}
-        if (data.players.online == 0) {count++;}
-        else {count = 0;}
+        count = data.players.online == 0 ? count + 1 : 0;
         if (count >= properties['timeout']) {server.stop(); break;}
-        await new Promise((resolve) => setTimeout(resolve, 60000));
     }
 
 });
