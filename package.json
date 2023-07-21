@@ -15,7 +15,6 @@
   },
   "dependencies": {
     "minecraft-protocol": "^1.43.2",
-    "properties-parser": "^0.6.0",
-    "sharp": "^0.32.3"
+    "properties-parser": "^0.6.0"
   }
 }
