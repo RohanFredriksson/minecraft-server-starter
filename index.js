@@ -4,14 +4,15 @@ const { Proxy } = require('./src/proxy');
 const { properties } = require('./src/properties');
 const { ping, line } = require('./src/util');
 
+console.log(line);
+console.log('Server sleeping. Waiting for login attempt...')
+
 var state = 'waiting';
 const proxy = new Proxy(properties['server-port'], properties['minecraft-server-starter-port']);
 const server = new MinecraftServer(properties['minecraft-server-port'], properties['command']);
 
-console.log(line);
-console.log('Server sleeping. Waiting for login attempt...')
-
 server.on('start', (server) => {
+    console.log(line);
     process.stdin.pipe(server.process.stdin);
     server.process.stdout.pipe(process.stdout);
     server.process.stderr.pipe(process.stderr);
