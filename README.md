@@ -27,7 +27,7 @@ npm install
 #Wed Jul 19 18:00:07 AEST 2023
 eula=true
 ```
-6. Next we will need to modify the actual Minecraft server port number to something that is not the final port that we will be hosting the server on, since we will be using a TCP proxy. In this case I changed the port number for the server to 25567. To change the port number change the following lines indicated with an arrow below in the **server.properties** file.
+6. Next we will need to modify the actual Minecraft server port number to something that is not the final port that we will be hosting the server on, since we will be using a TCP proxy. In this case, I changed the port number for the server to 25567. To change the port number change the following lines indicated with an arrow below in the **server.properties** file.
 ```
 #Minecraft server properties
 #Wed Jul 19 23:53:54 AEST 2023
