@@ -144,6 +144,11 @@ class MinecraftServer:
         self.process.stdin.write('stop\n')
         self.process.stdin.flush()
 
+    def enter_command(self, command):
+        if self.process == None: return
+        self.process.stdin.write(command)
+        self.process.stdin.flush()
+
     def _run_event(self, event):
         if event not in self.callbacks: return
         for callback in self.callbacks[event]: callback()
@@ -237,8 +242,6 @@ class ServerStarter:
                         server_address = packet.read_string()
                         server_port = packet.read_unsigned_short()
                         next_state = packet.read_varint()
-                        
-                        self._run_event('handshake', conn, addr, packet.size, packet.id, protocol_number, server_address, server_port, next_state)
 
                         protocol_state = next_state
                         
@@ -281,10 +284,6 @@ class ServerStarter:
 minecraft_server = MinecraftServer('java -Xms1G -Xmx1G -jar server.jar nogui')
 server_starter = ServerStarter(25566)
 proxy = Proxy(25565, 25566)
-
-def on_handshake(args):
-
-    conn, addr, packet_size, packet_id, protocol_number, server_address, server_port, next_state = args
 
 def on_ping(args):
     
@@ -335,7 +334,6 @@ def on_login(args):
 
     #minecraft_server.stop()
 
-server_starter.on('handshake', on_handshake)
 server_starter.on('ping', on_ping)
 server_starter.on('pong', on_pong)
 server_starter.on('login', on_login)
