@@ -4,6 +4,98 @@ import select
 import socket
 import threading
 
+# Variable Int Masks
+SEGMENT_BITS = 0x7F
+CONTINUE_BIT = 0x80
+
+# Minecraft Protocol States
+HANDSHAKING = 0
+STATUS = 1
+LOGIN = 2
+class PacketReader:
+
+    def __init__(self, stream: bytes):
+        self.stream = stream
+        self.size = self.read_varint()
+        self.id = self.read_varint()
+
+    def read_byte(self) -> bytes:
+        return self.read_bytes(1)
+    
+    def read_bytes(self, size: int) -> bytes:
+        result = self.stream[:size]
+        self.stream = self.stream[size:]
+        return result
+    
+    def read_string(self) -> str:
+        size = self.read_varint()
+        return self.read_bytes(size).decode("utf-8")
+
+    def read_varint(self) -> int:
+
+        value = 0
+        position = 0
+        
+        while True:
+            current = int.from_bytes(self.read_byte(), byteorder='big')
+            value |= (current & SEGMENT_BITS) << position
+            if (current & CONTINUE_BIT) == 0: break
+            position += 7
+            if position >= 32: raise Exception("VarInt is too big")
+
+        return value
+    
+    def read_unsigned_short(self) -> int:
+        return int.from_bytes(self.read_bytes(2), byteorder='big', signed=False)
+    
+    def read_long(self) -> int:
+        return int.from_bytes(self.read_bytes(8), byteorder='big', signed=True)
+
+class PacketWriter:
+
+    def __init__(self):
+        self.stream = bytearray()
+
+    def write_byte(self, value: int):
+        self.stream.append(value)
+
+    def write_bytes(self, stream: bytes):
+        self.stream = self.stream + stream
+
+    def write_string(self, string: str):
+        self.write_varint(len(string))
+        self.stream = self.stream + string.encode()
+
+    def write_long(self, value: int):
+        self.write_bytes(value.to_bytes(8, byteorder='big', signed=True))
+
+    def write_varint(self, value: int):
+        
+        while True:
+            
+            if (value & ~SEGMENT_BITS) == 0:
+                self.write_byte(value)
+                return
+            
+            self.write_byte((value & SEGMENT_BITS) | CONTINUE_BIT)
+            value = (value >> 7) & 4294967295 # Unsigned right shift operator
+
+    def encode(self, packet_id) -> bytes:
+
+        def size_varint(value: int):
+            count = 0
+            while True:
+                count += 1
+                if (value & ~SEGMENT_BITS) == 0: return count
+                value = (value >> 7) & 4294967295 # Unsigned right shift operator
+
+        header = PacketWriter()
+        header.write_varint(size_varint(packet_id) + len(self.stream))
+        header.write_varint(packet_id)
+
+        self.stream = header.stream + self.stream
+        return bytes(self.stream)
+    
 class Proxy:
 
     def __init__(self, host_port, connect_port):
@@ -56,92 +148,6 @@ class Proxy:
     def stop(self):
         self.stop_flag = True
 
-SEGMENT_BITS = 0x7F
-CONTINUE_BIT = 0x80
-
-class PacketReader:
-
-    def __init__(self, stream: bytes):
-        self.stream = stream
-        self.size = self.read_varint()
-        self.id = self.read_varint()
-
-    def read_byte(self) -> bytes:
-        return self.read_bytes(1)
-    
-    def read_bytes(self, size: int) -> bytes:
-        result = self.stream[:size]
-        self.stream = self.stream[size:]
-        return result
-    
-    def read_string(self, size: int) -> str:
-        return self.read_bytes(size).decode("utf-8")
-
-    def read_varint(self) -> int:
-
-        value = 0
-        position = 0
-        
-        while True:
-            current = int.from_bytes(self.read_byte(), byteorder='big')
-            value |= (current & SEGMENT_BITS) << position
-            if (current & CONTINUE_BIT) == 0: break
-            position += 7
-            if position >= 32: raise Exception("VarInt is too big")
-
-        return value
-    
-    def read_unsigned_short(self) -> int:
-        return int.from_bytes(self.read_bytes(2), byteorder='big')
-    
-    def read_long(self) -> int:
-        return int.from_bytes(self.read_bytes(8), byteorder='big')
-
-class PacketWriter:
-
-    def __init__(self):
-        self.stream = bytearray()
-
-    def write_byte(self, value: int):
-        self.stream.append(value)
-
-    def write_bytes(self, stream: bytes):
-        self.stream = self.stream + stream
-
-    def write_string(self, string: str):
-        self.write_varint(len(string))
-        self.stream = self.stream + string.encode()
-
-    def write_long(self, value: int):
-        self.write_bytes(value.to_bytes(8, byteorder='big', signed=True))
-
-    def write_varint(self, value: int):
-        
-        while True:
-            
-            if (value & ~SEGMENT_BITS) == 0:
-                self.write_byte(value)
-                return
-            
-            self.write_byte((value & SEGMENT_BITS) | CONTINUE_BIT)
-            value = (value >> 7) & 4294967295 # Unsigned right shift operator
-
-    def encode(self, packet_id) -> bytes:
-
-        def size_varint(value: int):
-            count = 0
-            while True:
-                count += 1
-                if (value & ~SEGMENT_BITS) == 0: return count
-                value = (value >> 7) & 4294967295 # Unsigned right shift operator
-
-        header = PacketWriter()
-        header.write_varint(size_varint(packet_id) + len(self.stream))
-        header.write_varint(packet_id)
-
-        self.stream = header.stream + self.stream
-        return bytes(self.stream)
-    
 class ServerStarter:
 
     def __init__(self, host_port):
@@ -153,12 +159,8 @@ class ServerStarter:
 
         def handle(conn, addr):
 
-            HANDSHAKING = 0
-            STATUS = 1
-            LOGIN = 2
-
-            state = HANDSHAKING
-
+            protocol_state = HANDSHAKING
+            
             while not self.stop_flag:
 
                 r, w, err = select.select((conn,), (), (), 0.1)
@@ -173,20 +175,20 @@ class ServerStarter:
 
                     packet = PacketReader(data)
                 
-                    if state == HANDSHAKING and packet.id == 0:
+                    if protocol_state == HANDSHAKING and packet.id == 0:
 
                         protocol_number = packet.read_varint()
-                        server_address_size = packet.read_varint()
-                        server_address = packet.read_string(server_address_size)
+                        server_address = packet.read_string()
                         server_port = packet.read_unsigned_short()
                         next_state = packet.read_varint()
                         
                         self._run_event('handshake', conn, addr, packet.size, packet.id, protocol_number, server_address, server_port, next_state)
 
-                        state = next_state
+                        protocol_state = next_state
                         
-                    elif state == STATUS and packet.id == 0: self._run_event('ping', conn, addr, packet)
-                    elif state == STATUS and packet.id == 1: self._run_event('pong', conn, addr, packet)
+                    elif protocol_state == STATUS and packet.id == 0: self._run_event('ping',  conn, addr, packet)
+                    elif protocol_state == STATUS and packet.id == 1: self._run_event('pong',  conn, addr, packet)
+                    elif protocol_state == LOGIN  and packet.id == 0: self._run_event('login', conn, addr, packet)
 
         def start():
 
@@ -262,13 +264,21 @@ def on_pong(args):
     response = PacketWriter()
     response.write_long(packet.read_long())
     data = response.encode(1)
-    print(data)
     conn.send(data)
 
 def on_login(args):
 
-    conn, addr, packet_size, packet_id, protocol_number, server_address, server_port = args
+    conn, addr, packet = args
     print("LOGIN")
+
+    reason_string = json.dumps({
+        "text": "Server is waking up. Please wait a few seconds."
+    })
+
+    response = PacketWriter()
+    response.write_string(reason_string)
+    data = response.encode(0)
+    conn.send(data)
 
 server_starter.on('handshake', on_handshake)
 server_starter.on('ping', on_ping)
