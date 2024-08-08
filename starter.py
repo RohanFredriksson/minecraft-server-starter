@@ -172,11 +172,6 @@ class ServerStarter:
                         return
 
                     packet = PacketReader(data)
-
-                    print()
-                    print()
-                    print()
-                    print(data)
                 
                     if state == HANDSHAKING and packet.id == 0:
 
