@@ -1,8 +1,10 @@
+import re
 import json
 import time
 import select
 import socket
 import threading
+import subprocess
 
 # Variable Int Masks
 SEGMENT_BITS = 0x7F
@@ -95,7 +97,61 @@ class PacketWriter:
 
         self.stream = header.stream + self.stream
         return bytes(self.stream)
-    
+
+class MinecraftServer:
+
+    def __init__(self, command):
+        
+        self.command = command
+        self.callbacks = {'start': [], 'ready': [], 'exit': []}
+        self.process = None
+
+    def __del__(self):
+        if self.process != None: self.process.terminate()
+
+    def start(self):
+
+        if self.process != None: raise Exception("Minecraft server has already started.")
+
+        def routine():
+
+            self.process = subprocess.Popen(["java", "-Xms1G", "-Xmx1G", "-jar", "server.jar", "nogui"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self._run_event('start')
+
+            def waiter(p):
+                p.wait()
+                self._run_event('exit')
+                if p == self.process: self.process = None
+
+            thread = threading.Thread(target=waiter, args=(self.process,))
+            thread.start()
+
+            while self.process != None:
+                
+                line = self.process.stdout.readline()
+                if not line: break
+                print(line, end="")
+
+                pattern = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] \[Server thread/INFO\]: Done.*")
+                result = pattern.match(line)
+                if result: self._run_event('ready')
+
+        thread = threading.Thread(target=routine, args=())
+        thread.start()
+
+    def stop(self):
+        if self.process == None: return
+        self.process.stdin.write('stop\n')
+        self.process.stdin.flush()
+
+    def _run_event(self, event):
+        if event not in self.callbacks: return
+        for callback in self.callbacks[event]: callback()
+
+    def on(self, event, callback):
+        if event not in self.callbacks: return
+        self.callbacks[event].append(callback)
+
 class Proxy:
 
     def __init__(self, host_port, connect_port):
@@ -153,14 +209,14 @@ class ServerStarter:
     def __init__(self, host_port):
         
         self.host_port = host_port
-        self.events = {'handshake': [], 'ping': [], 'pong': [], 'login': []}
+        self.callbacks = {'handshake': [], 'ping': [], 'pong': [], 'login': []}
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.stop_flag = False
 
         def handle(conn, addr):
 
             protocol_state = HANDSHAKING
-            
+
             while not self.stop_flag:
 
                 r, w, err = select.select((conn,), (), (), 0.1)
@@ -209,12 +265,12 @@ class ServerStarter:
         thread.start()
 
     def _run_event(self, event, *args):
-        if event not in self.events: return
-        for function in self.events[event]: function(args)
+        if event not in self.callbacks: return
+        for callback in self.callbacks[event]: callback(args)
 
-    def on(self, event, function):
-        if event not in self.events: return
-        self.events[event].append(function)
+    def on(self, event, callback):
+        if event not in self.callbacks: return
+        self.callbacks[event].append(callback)
 
     def __del__(self):
         self.stop_flag = True
@@ -222,18 +278,17 @@ class ServerStarter:
     def stop(self):
         self.stop_flag = True
 
+minecraft_server = MinecraftServer('java -Xms1G -Xmx1G -jar server.jar nogui')
 server_starter = ServerStarter(25566)
 proxy = Proxy(25565, 25566)
 
 def on_handshake(args):
 
     conn, addr, packet_size, packet_id, protocol_number, server_address, server_port, next_state = args
-    print("HANDSHAKE")
 
 def on_ping(args):
     
     conn, addr, packet = args
-    print("PING")
     
     status_string = json.dumps({
         "version": {
@@ -259,7 +314,6 @@ def on_ping(args):
 def on_pong(args):
 
     conn, addr, packet = args
-    print("PONG")
 
     response = PacketWriter()
     response.write_long(packet.read_long())
@@ -269,7 +323,6 @@ def on_pong(args):
 def on_login(args):
 
     conn, addr, packet = args
-    print("LOGIN")
 
     reason_string = json.dumps({
         "text": "Server is waking up. Please wait a few seconds."
@@ -280,14 +333,31 @@ def on_login(args):
     data = response.encode(0)
     conn.send(data)
 
+    #minecraft_server.stop()
+
 server_starter.on('handshake', on_handshake)
 server_starter.on('ping', on_ping)
 server_starter.on('pong', on_pong)
 server_starter.on('login', on_login)
 
+def on_start():
+    print("START")
+
+def on_ready():
+    print("READY")
+
+def on_exit():
+    print("EXIT")
+
+minecraft_server.on('start', on_start)
+minecraft_server.on('ready', on_ready)
+minecraft_server.on('exit', on_exit)
+minecraft_server.start()
+
 while True:
     try: time.sleep(0.1)
     except KeyboardInterrupt:
+        minecraft_server.stop()
         server_starter.stop()
         proxy.stop()
         break
