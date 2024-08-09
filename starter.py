@@ -5,7 +5,7 @@ from scripts.packet import PacketReader, PacketWriter
 from scripts.minecraft_server import MinecraftServer
 from scripts.protocol_server import ProtocolServer
 from scripts.properties import Properties
-from scripts.proxy import Proxy
+from scripts.proxy import DynamicProxy
 from scripts.ping import ping
 
 WAITING = 0
@@ -17,7 +17,9 @@ server_properties = Properties('server.properties')
 
 minecraft_server = MinecraftServer(starter_properties['command'])
 protocol_server = ProtocolServer(starter_properties['starter-port'])
-proxy = Proxy(starter_properties['server-port'], starter_properties['starter-port'])
+proxy = DynamicProxy(starter_properties['server-port'], starter_properties['starter-port'])
+proxy.start()
+
 state = WAITING
 
 def on_ping(args):
@@ -58,6 +60,7 @@ def on_pong(args):
     response.write_long(packet.read_long())
     data = response.encode(1)
     conn.send(data)
+    conn.close()
 
 def on_login(args):
 
@@ -69,10 +72,10 @@ def on_login(args):
     response.write_string(json.dumps({"text": starter_properties['starting-reason']}))
     data = response.encode(0)
     conn.send(data)
+    conn.close()
 
-    # If we are currently waiting and the server is not online, start the server.
-    response = ping('127.0.0.1', server_properties['server-port'])
-    if response['online'] == True or state != WAITING: return
+    # If we are currently waiting, start the server.
+    if state != WAITING: return
 
     print('Server is starting...')
     minecraft_server.start()
@@ -86,10 +89,12 @@ def on_ready():
 
     # Swap the proxy to the actual server.
     global state, proxy, minecraft_server, starter_properties, server_properties
-    
-    proxy.stop()
+    #proxy.swap(server_properties['server-port'])
+    proxy.update_forwarding(server_properties['server-port'])
     time.sleep(1)
-    proxy = Proxy(starter_properties['server-port'], server_properties['server-port'])
+    
+    ping('127.0.0.1', 25565)
+
     state = STARTED
 
 def on_exit():
@@ -97,10 +102,10 @@ def on_exit():
     # Swap the proxy to the protocol server.
     global state, proxy, minecraft_server, starter_properties, server_properties
     print('Serving sleeping. Waiting for login attempt...')
+    proxy.swap(starter_properties['starter-port'])
+
     
-    proxy.stop()
-    time.sleep(1)
-    proxy = Proxy(starter_properties['server-port'], starter_properties['starter-port'])
+
     state = WAITING
 
 minecraft_server.on('ready', on_ready)

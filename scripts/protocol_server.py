@@ -22,31 +22,38 @@ class ProtocolServer:
             protocol_state = HANDSHAKING
 
             while not self.stop_flag:
-
-                r, w, err = select.select((conn,), (), (), 0.1)
-                if not r: continue
-
-                for readable in r:
-                    
-                    data = readable.recv(4096)
-                    if not data: 
-                        conn.close()
-                        return
-
-                    packet = PacketReader(data)
                 
-                    if protocol_state == HANDSHAKING and packet.id == 0:
+                try: 
 
-                        protocol_number = packet.read_varint()
-                        server_address = packet.read_string()
-                        server_port = packet.read_unsigned_short()
-                        next_state = packet.read_varint()
+                    r, w, err = select.select((conn,), (), (), 0.1)
+                    if not r: continue
 
-                        protocol_state = next_state
+                    for readable in r:
                         
-                    elif protocol_state == STATUS and packet.id == 0: self._run_event('ping',  conn, addr, packet)
-                    elif protocol_state == STATUS and packet.id == 1: self._run_event('pong',  conn, addr, packet)
-                    elif protocol_state == LOGIN  and packet.id == 0: self._run_event('login', conn, addr, packet)
+                        data = readable.recv(4096)
+                        if not data: 
+                            conn.close()
+                            return
+
+                        packet = PacketReader(data)
+                    
+                        if protocol_state == HANDSHAKING and packet.id == 0:
+
+                            protocol_number = packet.read_varint()
+                            server_address = packet.read_string()
+                            server_port = packet.read_unsigned_short()
+                            next_state = packet.read_varint()
+
+                            protocol_state = next_state
+                            
+                        elif protocol_state == STATUS and packet.id == 0: self._run_event('ping',  conn, addr, packet)
+                        elif protocol_state == STATUS and packet.id == 1: self._run_event('pong',  conn, addr, packet)
+                        elif protocol_state == LOGIN  and packet.id == 0: self._run_event('login', conn, addr, packet)
+
+                except: break
+
+            try: conn.close()
+            except: pass
 
         def start():
 
