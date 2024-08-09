@@ -3,6 +3,7 @@ import json
 from scripts.packet import PacketReader, PacketWriter
 from scripts.minecraft_server import MinecraftServer
 from scripts.protocol_server import ProtocolServer
+from scripts.properties import Properties
 from scripts.proxy import Proxy
 from scripts.ping import ping
 
@@ -10,9 +11,16 @@ WAITING = 0
 STARTING = 1
 STARTED = 2
 
-minecraft_server = MinecraftServer('java -Xms1G -Xmx1G -jar server.jar nogui')
-protocol_server = ProtocolServer(25566)
-proxy = Proxy(25565, 25566)
+starter_properties = Properties('starter.properties')
+server_properties = Properties('server.properties')
+
+
+#print(server_properties.properties)
+
+
+#minecraft_server = MinecraftServer(properties['command'])
+#protocol_server = ProtocolServer(properties['starter-port'])
+#proxy = Proxy(properties['server-port'], properties['starter-port'])
 
 def on_ping(args):
     
@@ -63,9 +71,9 @@ def on_login(args):
 
     #minecraft_server.stop()
 
-protocol_server.on('ping', on_ping)
-protocol_server.on('pong', on_pong)
-protocol_server.on('login', on_login)
+#protocol_server.on('ping', on_ping)
+#protocol_server.on('pong', on_pong)
+#protocol_server.on('login', on_login)
 
 def on_start():
     print("START")
@@ -77,11 +85,12 @@ def on_ready():
 def on_exit():
     print("EXIT")
 
-minecraft_server.on('start', on_start)
-minecraft_server.on('ready', on_ready)
-minecraft_server.on('exit', on_exit)
+#minecraft_server.on('start', on_start)
+#minecraft_server.on('ready', on_ready)
+#minecraft_server.on('exit', on_exit)
 #minecraft_server.start()
 
+"""
 while True:
     
     try:
@@ -93,3 +102,4 @@ while True:
         protocol_server.stop()
         proxy.stop()
         break
+"""
