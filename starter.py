@@ -1,4 +1,5 @@
 import json
+import time
 
 from scripts.packet import PacketReader, PacketWriter
 from scripts.minecraft_server import MinecraftServer
@@ -14,18 +15,19 @@ STARTED = 2
 starter_properties = Properties('starter.properties')
 server_properties = Properties('server.properties')
 
-
-#print(server_properties.properties)
-
-
-#minecraft_server = MinecraftServer(properties['command'])
-#protocol_server = ProtocolServer(properties['starter-port'])
-#proxy = Proxy(properties['server-port'], properties['starter-port'])
+minecraft_server = MinecraftServer(starter_properties['command'])
+protocol_server = ProtocolServer(starter_properties['starter-port'])
+proxy = Proxy(starter_properties['server-port'], starter_properties['starter-port'])
+state = WAITING
 
 def on_ping(args):
     
     conn, addr, packet = args
+
+    description = starter_properties['waiting-motd']
+    if state == STARTING: starter_properties['starting-motd']
     
+    # Required response to client to show status to pinging clients.
     status_string = json.dumps({
         "version": {
             "name": "1.20.1",
@@ -37,7 +39,7 @@ def on_ping(args):
             "sample": []
         },
         "description": {
-            "text": "Hello, world!"
+            "text": description
         },
         "enforcesSecureChat": False
     })
@@ -51,6 +53,7 @@ def on_pong(args):
 
     conn, addr, packet = args
 
+    # Return the ping packet to the client.
     response = PacketWriter()
     response.write_long(packet.read_long())
     data = response.encode(1)
@@ -58,48 +61,59 @@ def on_pong(args):
 
 def on_login(args):
 
+    global state, proxy, minecraft_server, starter_properties, server_properties
     conn, addr, packet = args
 
-    reason_string = json.dumps({
-        "text": "Server is waking up. Please wait a few seconds."
-    })
-
+    # Send a disconnect packet to the client.
     response = PacketWriter()
-    response.write_string(reason_string)
+    response.write_string(json.dumps({"text": starter_properties['starting-reason']}))
     data = response.encode(0)
     conn.send(data)
 
-    #minecraft_server.stop()
+    # If we are currently waiting and the server is not online, start the server.
+    response = ping('127.0.0.1', server_properties['server-port'])
+    if response['online'] == True or state != WAITING: return
 
-#protocol_server.on('ping', on_ping)
-#protocol_server.on('pong', on_pong)
-#protocol_server.on('login', on_login)
+    print('Server is starting...')
+    minecraft_server.start()
+    state = STARTING
 
-def on_start():
-    print("START")
+protocol_server.on('ping', on_ping)
+protocol_server.on('pong', on_pong)
+protocol_server.on('login', on_login)
 
 def on_ready():
-    print("READY")
-    ping('127.0.0.1', 25567)
+
+    # Swap the proxy to the actual server.
+    global state, proxy, minecraft_server, starter_properties, server_properties
+    
+    proxy.stop()
+    time.sleep(1)
+    proxy = Proxy(starter_properties['server-port'], server_properties['server-port'])
+    state = STARTED
 
 def on_exit():
-    print("EXIT")
 
-#minecraft_server.on('start', on_start)
-#minecraft_server.on('ready', on_ready)
-#minecraft_server.on('exit', on_exit)
-#minecraft_server.start()
+    # Swap the proxy to the protocol server.
+    global state, proxy, minecraft_server, starter_properties, server_properties
+    print('Serving sleeping. Waiting for login attempt...')
+    
+    proxy.stop()
+    time.sleep(1)
+    proxy = Proxy(starter_properties['server-port'], starter_properties['starter-port'])
+    state = WAITING
 
-"""
+minecraft_server.on('ready', on_ready)
+minecraft_server.on('exit', on_exit)
+
 while True:
     
     try:
         line = input()
-        print(f"INPUT: {line}")
+        minecraft_server.enter_command(f"{line}\n")
     
     except KeyboardInterrupt:
         minecraft_server.stop()
         protocol_server.stop()
         proxy.stop()
         break
-"""

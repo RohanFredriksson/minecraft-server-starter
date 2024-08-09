@@ -19,7 +19,7 @@ class MinecraftServer:
 
         def routine():
 
-            self.process = subprocess.Popen(["java", "-Xms1G", "-Xmx1G", "-jar", "server.jar", "nogui"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.process = subprocess.Popen(self.command.split(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             self._run_event('start')
 
             def waiter(p):
