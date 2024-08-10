@@ -39,8 +39,10 @@ def ping(host, port):
         response = reader.read_string()
         result = json.loads(response)
         if type(result) != dict: raise Exception("JSON response of incorrect format.")
-        result["online": True]
+        result["online"] = True
         return result
 
-    except: return {"online": False}
+    except Exception as e: 
+        print(e)
+        return {"online": False}
     
