@@ -42,7 +42,7 @@ server-port=25567 <--
 ```bash
 python3 starter.py
 ```
-The will start the server in sleep mode. To start the server connect to the Minecraft, log in to the server using the Minecraft Client. This will then begin starting the server. Log in to the server again and it should be running ready to play on! Feel free to tune the parameters to your liking by altering the values in the **.properties** files.
+This will start the server in sleep mode. To start the playing start up Minecraft, then log in to the server using the Minecraft Client. This will then start the server. Log in to the server again and it should be running ready to play on! Feel free to tune the parameters to your liking by altering the values in the **.properties** files.
 ## Screenshots
 
 
