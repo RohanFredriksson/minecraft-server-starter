@@ -36,12 +36,12 @@ class DynamicProxy:
                         conn.close()
                         return
 
-                    if readable == conn: internal.send(data)
-                    elif readable == internal: conn.send(data)
+                    if readable == conn: internal.sendall(data)
+                    elif readable == internal: conn.sendall(data)
 
         def accept_connections():
 
-            self.external.bind(('127.0.0.1', self.host_port))
+            self.external.bind(('0.0.0.0', self.host_port))
             self.external.listen(1)
 
             while not self.stop_flag:

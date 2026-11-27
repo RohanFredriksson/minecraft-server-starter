@@ -43,6 +43,8 @@ server-port=25567 <--
 python3 starter.py
 ```
 This will start the server in sleep mode. To start playing start up Minecraft, then log in to the server using the Minecraft Client. This will then start the server. Log in to the server again and it should be ready to play on! Feel free to tune the parameters to your liking by altering the values in the **.properties** files.
+
+The starter listens on all network interfaces at the configured `server-port`. To connect from another device, allow that port through the host firewall; internet connections may also require port forwarding on your router.
 ## Screenshots
 
 
