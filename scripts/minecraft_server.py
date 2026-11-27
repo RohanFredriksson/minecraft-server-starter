@@ -7,7 +7,7 @@ class MinecraftServer:
     def __init__(self, command):
         
         self.command = command
-        self.callbacks = {'start': [], 'ready': [], 'exit': []}
+        self.callbacks = {'start': [], 'binding': [], 'ready': [], 'exit': []}
         self.process = None
 
     def __del__(self):
@@ -17,28 +17,28 @@ class MinecraftServer:
 
         if self.process != None: raise Exception("Minecraft server has already started.")
 
+        process = subprocess.Popen(self.command.split(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.process = process
+        self._run_event('start')
+
         def routine():
 
-            self.process = subprocess.Popen(self.command.split(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            self._run_event('start')
+            binding = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] \[Server thread/INFO\]: Starting minecraft server version")
+            ready = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] \[Server thread/INFO\]: Done.*")
 
-            def waiter(p):
-                p.wait()
-                self._run_event('exit')
-                if p == self.process: self.process = None
-
-            thread = threading.Thread(target=waiter, args=(self.process,))
-            thread.start()
-
-            while self.process != None:
+            while True:
                 
-                line = self.process.stdout.readline()
+                line = process.stdout.readline()
                 if not line: break
                 print(line, end="")
 
-                pattern = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] \[Server thread/INFO\]: Done.*")
-                result = pattern.match(line)
-                if result: self._run_event('ready')
+                # Logged shortly before the server binds its port.
+                if binding.match(line): self._run_event('binding')
+                if ready.match(line): self._run_event('ready')
+
+            process.wait()
+            if process == self.process: self.process = None
+            self._run_event('exit')
 
         thread = threading.Thread(target=routine, args=())
         thread.start()

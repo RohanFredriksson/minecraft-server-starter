@@ -2,90 +2,94 @@ import threading
 import json
 import time
 
-from scripts.packet import PacketReader, PacketWriter
 from scripts.minecraft_server import MinecraftServer
 from scripts.protocol_server import ProtocolServer
 from scripts.properties import Properties
-from scripts.proxy import DynamicProxy
 from scripts.ping import ping
 
-WAITING = 0
+SLEEPING = 0
 STARTING = 1
-STARTED = 2
+RUNNING = 2
 STOPPED = 3
 
 starter_properties = Properties('starter.properties')
 server_properties = Properties('server.properties')
 
-minecraft_server = MinecraftServer(starter_properties['command'])
-protocol_server = ProtocolServer(starter_properties['starter-port'])
-proxy = DynamicProxy(starter_properties['server-port'], starter_properties['starter-port'])
-state = WAITING
+# The Minecraft server owns the public port while it runs, so the starter shares its address.
+server_ip = server_properties.get('server-ip', '')
+server_port = server_properties.get('server-port', 25565)
+local_ip = server_ip if server_ip not in ('', '0.0.0.0', '::') else '127.0.0.1'
 
-def on_ping(args):
-    
-    global state, proxy, minecraft_server, starter_properties, server_properties
-    conn, addr, packet = args
+class Boot:
+
+    def __init__(self):
+        self.finished = threading.Event()
+        self.ready = False
+
+minecraft_server = MinecraftServer(starter_properties['command'])
+state = SLEEPING
+boot = None
+lock = threading.Lock()
+
+def status():
 
     # Depending on the state, we need to show different motds.
     description = starter_properties['waiting-motd']
-    if state == STARTING: starter_properties['starting-motd']
+    if state == STARTING: description = starter_properties['starting-motd']
     
     # Required response to client to show status to pinging clients.
-    status_string = json.dumps({
+    return json.dumps({
         "version": { "name": starter_properties["version"], "protocol": starter_properties["protocol"] },
         "players": { "max": 20, "online": 0, "sample": [] },
         "description": { "text": description },
         "enforcesSecureChat": False
     })
-    
-    response = PacketWriter()
-    response.write_string(status_string)
-    data = response.encode(0)
-    conn.send(data)
 
-def on_pong(args):
+def on_login(player):
 
-    conn, addr, packet = args
+    global state, boot
 
-    # Return the ping packet to the client.
-    response = PacketWriter()
-    response.write_long(packet.read_long())
-    data = response.encode(1)
-    conn.send(data)
-    conn.close()
+    with lock:
 
-def on_login(args):
+        if state == STOPPED:
+            player.close()
+            return
 
-    global state, proxy, minecraft_server, starter_properties, server_properties
-    conn, addr, packet = args
+        if state == SLEEPING:
+            print('Server is starting...')
+            print('-'*80)
+            boot = Boot()
+            state = STARTING
 
-    # Send a disconnect packet to the client.
-    response = PacketWriter()
-    response.write_string(json.dumps({"text": starter_properties['starting-reason']}))
-    data = response.encode(0)
-    conn.send(data)
-    conn.close()
+            try: minecraft_server.start()
+            except OSError as error:
+                print(f'Could not start the server: {error}')
+                state = SLEEPING
+                boot.finished.set()
 
-    # If we are currently waiting, start the server.
-    if state != WAITING: return
+        player_boot = boot
 
-    print('Server is starting...')
-    print('-'*80)
+    # Keep the player on the loading screen until the server is ready, then pass them over.
+    if not player.hold(player_boot.finished, starter_properties['hold-timeout']):
+        player.disconnect(starter_properties['starting-reason'])
+    elif not player_boot.ready:
+        player.disconnect('The server failed to start.')
+    else:
+        player.hand_over(local_ip, server_port)
 
-    minecraft_server.start()
-    state = STARTING
+protocol_server = ProtocolServer(server_ip, server_port, status, on_login)
 
-protocol_server.on('ping', on_ping)
-protocol_server.on('pong', on_pong)
-protocol_server.on('login', on_login)
+def on_binding():
+    # Free the port at the last moment so the server can take it over.
+    protocol_server.release()
 
 def on_ready():
 
-    # Swap the proxy to the actual server.
-    global state, proxy, minecraft_server, starter_properties, server_properties
-    proxy.swap(server_properties['server-port'])
-    state = STARTED
+    global state
+    with lock:
+        state = RUNNING
+        boot.ready = True
+        boot.finished.set()
 
     # Inactivity timeout.
     def timeout():
@@ -99,7 +103,7 @@ def on_ready():
                 time.sleep(0.1)
         
             # If there are players online reset the count, else increment.
-            response = ping('127.0.0.1', server_properties['server-port'])
+            response = ping(local_ip, server_port)
             if response['online'] == False: return
             if response['players']['online'] > 0: timeout_count = 0 
             else: timeout_count += 1
@@ -113,7 +117,7 @@ def on_ready():
     thread.start()
 
     # Update the version name and protocol number in starter properties
-    response = ping('127.0.0.1', server_properties['server-port'])
+    response = ping(local_ip, server_port)
     if response["online"] == False: return
 
     starter_properties["protocol"] = response["version"]["protocol"]
@@ -122,19 +126,23 @@ def on_ready():
 
 def on_exit():
 
-    # Swap the proxy to the protocol server.
-    global state, proxy, minecraft_server, starter_properties, server_properties
-    if state == STOPPED: return
-    print('-'*80)
-    print('Serving sleeping. Waiting for login attempt...')
-    proxy.swap(starter_properties['starter-port'])
-    state = WAITING
+    global state
+    with lock:
+        if state == STOPPED: return
+        state = SLEEPING
+        boot.finished.set()
 
+    print('-'*80)
+    print('Server sleeping. Waiting for login attempt...')
+    protocol_server.open()
+
+minecraft_server.on('binding', on_binding)
 minecraft_server.on('ready', on_ready)
 minecraft_server.on('exit', on_exit)
 
+protocol_server.open()
 print('-'*80)
-print('Serving sleeping. Waiting for login attempt...')
+print('Server sleeping. Waiting for login attempt...')
 
 while True:
     
@@ -146,6 +154,5 @@ while True:
         print('-'*80)
         state = STOPPED
         minecraft_server.stop()
-        protocol_server.stop()
-        proxy.stop()
+        protocol_server.release()
         break

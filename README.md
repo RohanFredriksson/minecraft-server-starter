@@ -21,30 +21,34 @@ git clone https://github.com/RohanFredriksson/minecraft-server-starter.git
 #Wed Jul 19 18:00:07 AEST 2023
 eula=true
 ```
-5. Next we will need to modify the actual Minecraft server port number to something that is not the final port that we will be hosting the server on, since we will be using a TCP proxy. In this case, I changed the port number for the server to 25567. To change the port number change the following lines indicated with an arrow below in the **server.properties** file.
-```
-#Minecraft server properties
-#Wed Jul 19 23:53:54 AEST 2023
-.
-.
-.
-query.port=25567 <--
-.
-.
-.
-server-ip=
-server-port=25567 <--
-.
-.
-.
-```
-6. Now we should be able to run the server using the default parameters. To run the server run the following command:
+5. Run the starter from the same folder as the server:
 ```bash
 python3 starter.py
 ```
-This will start the server in sleep mode. To start playing start up Minecraft, then log in to the server using the Minecraft Client. This will then start the server. Log in to the server again and it should be ready to play on! Feel free to tune the parameters to your liking by altering the values in the **.properties** files.
+The starter waits in sleep mode on the server's own address and port, taken from `server-ip` and `server-port` in **server.properties**, so players connect exactly as they would to the server itself. When a player joins, the starter starts the server and keeps them on the loading screen until it is ready, then passes them straight in. Once the server is running the starter steps aside and players connect to the server directly. After a period with nobody online the server is stopped and the starter takes the port back.
 
-The starter listens on all network interfaces (IPv4 and IPv6) at the configured `server-port`. To connect from another device, allow that port through the host firewall; internet connections may also require port forwarding on your router.
+Commands typed into the starter are forwarded to the Minecraft server while it is running. Press Ctrl+C to stop both.
+
+If `server-ip` is blank, the starter listens on all network interfaces (IPv4 and IPv6). To connect from another device, allow the port through the host firewall; internet connections may also require port forwarding on your router.
+
+### Settings
+The starter is configured with **starter.properties**:
+
+| Setting | Description |
+| --- | --- |
+| `command` | Command used to start the Minecraft server. |
+| `timeout` | Minutes with no players online before the server is stopped. |
+| `hold-timeout` | Seconds a joining player is kept waiting for the server to start before being disconnected with `starting-reason`. Minecraft clients give up after 30 seconds without traffic, so the starter keeps them connected while they wait. |
+| `waiting-motd` | Server list message shown while the server is asleep. |
+| `starting-motd` | Server list message shown while the server is starting. |
+| `starting-reason` | Message shown to a player if the server does not start within `hold-timeout`. |
+| `version`, `protocol` | Version shown in the server list while asleep. Updated automatically each time the server starts. |
+
+### Compatibility
+- Python 3.8 or newer is required.
+- Players must use Minecraft 1.13 or newer to be held while the server starts.
+- The starter detects the server's progress from its console output, so it is designed for the vanilla server.
+
 ## Screenshots
 
 

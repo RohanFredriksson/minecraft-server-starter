@@ -9,8 +9,7 @@ def ping(host, port):
     try:
 
         # Establish connection with server.
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect((host, port))
+        sock = socket.create_connection((host, port), timeout=2.0)
 
         # Handshake Packet
         writer = PacketWriter()

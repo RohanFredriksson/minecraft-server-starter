@@ -26,6 +26,9 @@ class Properties:
     def __getitem__(self, key):
         return self.properties[key]
 
+    def get(self, key, default=None):
+        return self.properties.get(key, default)
+
     def __setitem__(self, key, new_value):
         self.properties[key] = new_value
 
