@@ -48,3 +48,5 @@ This will start the server in sleep mode. To start playing start up Minecraft, t
 
 ## Contributions
 Contributions are welcome! If you find any bugs or have suggestions for improvements, feel free to open an issue or submit a pull request on GitHub.
+
+Have a question about using it? Ask in [Discussions](https://github.com/RohanFredriksson/minecraft-server-starter/discussions/categories/q-a).
