@@ -16,8 +16,8 @@ jobs:
         os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
         python: ['3.x']
         include:
-          # Oldest supported version.
-          - os: ubuntu-latest
+          # Oldest supported version, which newer Ubuntu images no longer provide.
+          - os: ubuntu-24.04
             python: '3.8'
 
     steps:
