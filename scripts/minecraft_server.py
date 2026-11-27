@@ -4,7 +4,7 @@ import subprocess
 import threading
 import re
 
-BINDING_PATTERN = re.compile(r'\bStarting minecraft server (?:version|on)\b', re.IGNORECASE)
+BINDING_PATTERN = re.compile(r'\bStarting minecraft server on\b', re.IGNORECASE)
 READY_PATTERN = re.compile(r'\bDone \([^)]*\)!', re.IGNORECASE)
 
 def split_command(command):

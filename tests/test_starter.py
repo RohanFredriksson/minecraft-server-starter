@@ -18,6 +18,11 @@ import threading
 import time
 import unittest
 import uuid
+from unittest import mock
+
+from scripts.minecraft_server import BINDING_PATTERN
+from scripts.packet import PacketReader, PacketWriter
+from scripts.protocol_server import FrameReader, HeldPlayer
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROTOCOL = 767
@@ -27,9 +32,10 @@ STARTING_MOTD = 'Server is waking up. Please wait a few seconds.'
 
 
 def varint(value):
+    value &= 0xFFFFFFFF
     out = bytearray()
     while True:
-        if value & ~0x7F == 0:
+        if value <= 0x7F:
             out.append(value)
             return bytes(out)
         out.append((value & 0x7F) | 0x80)
@@ -128,13 +134,13 @@ def status(port, host='127.0.0.1'):
     return description['text'] if isinstance(description, dict) else description
 
 
-def login(port, name, timeout=60):
+def login(port, name, timeout=60, intent=2):
     """Logs in like a 1.20.2+ client, answering the starter's keep-alives.
 
     Returns the disconnect message, which is "Welcome <name>" when the fake server accepted the login.
     """
     with socket.create_connection(('127.0.0.1', port), timeout=timeout) as sock:
-        sock.sendall(handshake(port, 2) + frame(0x00, string(name) + uuid.uuid3(uuid.NAMESPACE_DNS, name).bytes))
+        sock.sendall(handshake(port, intent) + frame(0x00, string(name) + uuid.uuid3(uuid.NAMESPACE_DNS, name).bytes))
         while True:
             packet_id, read = read_packet(sock)
             if packet_id == 0x04:
@@ -157,6 +163,86 @@ def wait_for(condition, timeout):
         if result: return result
         time.sleep(0.1)
     return None
+
+
+class PacketProtocolTest(unittest.TestCase):
+
+    def test_varints_round_trip_signed_32_bit_values(self):
+        samples = {
+            -0x80000000: bytes.fromhex('8080808008'),
+            -1: bytes.fromhex('ffffffff0f'),
+            0: b'\x00',
+            0x7FFFFFFF: bytes.fromhex('ffffffff07'),
+        }
+        for value, expected in samples.items():
+            with self.subTest(value=value):
+                writer = PacketWriter()
+                writer.write_varint(value)
+                self.assertEqual(bytes(writer.stream), expected)
+
+                packet = PacketReader(bytes([len(expected) + 1, 0]) + expected)
+                self.assertEqual(packet.read_varint(), value)
+
+    def test_varint_rejects_out_of_range_values_and_truncation(self):
+        with self.assertRaises(ValueError):
+            PacketWriter().write_varint(0x80000000)
+        with self.assertRaises(ValueError):
+            PacketReader(b'\x02\x00\x80').read_varint()
+
+    def test_frame_length_limit_matches_three_byte_protocol_limit(self):
+        left, right = socket.socketpair()
+        self.addCleanup(left.close)
+        self.addCleanup(right.close)
+        reader = FrameReader(left)
+
+        reader.buffer = bytearray(varint(2_097_152))
+        with self.assertRaises(ValueError):
+            reader.read(0)
+
+        reader.buffer = bytearray(b'\x80\x80\x80\x00')
+        with self.assertRaises(ValueError):
+            reader.read(0)
+
+    def test_short_padded_frame_length_is_allowed(self):
+        left, right = socket.socketpair()
+        self.addCleanup(left.close)
+        self.addCleanup(right.close)
+        reader = FrameReader(left)
+        reader.buffer = bytearray(b'\x80\x01\x00')
+        self.assertIsNone(reader.read(0))
+
+    def test_unanswered_plugin_response_prevents_handover(self):
+        class NoResponseReader:
+            buffer = bytearray()
+
+            def read(self, timeout):
+                return None
+
+        player = HeldPlayer(None, None, NoResponseReader(), b'')
+        player.outstanding.add(1)
+        finished = threading.Event()
+        finished.set()
+        with mock.patch('scripts.protocol_server.PLUGIN_RESPONSE_DRAIN_TIMEOUT', 0.01):
+            self.assertFalse(player.hold(finished, 1))
+
+    def test_disconnect_sends_message_and_drains_pending_input(self):
+        server, client = socket.socketpair()
+        self.addCleanup(server.close)
+        self.addCleanup(client.close)
+        client.sendall(b'late plugin response')
+        player = HeldPlayer(server, None, None, b'')
+        worker = threading.Thread(target=player.disconnect, args=('Closed',))
+        worker.start()
+        packet_id, read = read_packet(client)
+        self.assertEqual(packet_id, 0)
+        self.assertEqual(json.loads(read_string(read))['text'], 'Closed')
+        client.close()
+        worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+
+    def test_binding_pattern_only_matches_bind_log(self):
+        self.assertIsNone(BINDING_PATTERN.search('Starting minecraft server version 1.21'))
+        self.assertIsNotNone(BINDING_PATTERN.search('Starting Minecraft server on *:25565'))
 
 
 class StarterTest(unittest.TestCase):
@@ -233,6 +319,33 @@ class StarterTest(unittest.TestCase):
         self.assertEqual(status(self.port, '127.0.0.1'), SLEEPING_MOTD)
         if ipv6_available():
             self.assertEqual(status(self.port, '::1'), SLEEPING_MOTD)
+
+    def test_legacy_server_list_ping(self):
+        self.start_starter()
+        for ping in (b'\xfe', b'\xfe\x01\xfa'):
+            with self.subTest(ping=ping), socket.create_connection(('127.0.0.1', self.port), timeout=5) as sock:
+                sock.sendall(ping)
+                self.assertEqual(recv_exact(sock, 1), b'\xff')
+                size = int.from_bytes(recv_exact(sock, 2), 'big')
+                response = recv_exact(sock, size * 2).decode('utf-16-be')
+                self.assertEqual(response.split('\0')[0], '\u00a71')
+                self.assertIn(SLEEPING_MOTD, response)
+
+    def test_negative_status_protocol_is_reported_as_signed(self):
+        self.start_starter()
+        self.assertEqual(status_response(self.port, protocol=-1)['version']['protocol'], -1)
+
+    def test_unsupported_login_version_is_disconnected(self):
+        self.start_starter()
+        with socket.create_connection(('127.0.0.1', self.port), timeout=5) as sock:
+            sock.sendall(handshake(self.port, 2, protocol=340) + frame(0x00, string('OldClient')))
+            packet_id, read = read_packet(sock)
+            self.assertEqual(packet_id, 0x00)
+            self.assertIn('Minecraft 1.13 or newer is required.', json.loads(read_string(read))['text'])
+
+    def test_transfer_login_is_forwarded_to_server(self):
+        self.start_starter()
+        self.assertEqual(login(self.port, 'Transfer', intent=3), 'Welcome Transfer')
 
     def test_wake_up_hand_over_and_sleep_again(self):
         self.start_starter()

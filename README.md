@@ -77,7 +77,7 @@ Then copy any values you changed into the new file. The starter no longer needs 
 
 ### Compatibility
 - Python 3.8 or newer is required.
-- Players must use Minecraft 1.13 or newer to be held while the server starts.
+- Players must use Minecraft 1.13 or newer to be held while the server starts; older login attempts are disconnected with a message. Transfer-originated logins are passed to the server for its transfer policy.
 - The starter detects startup progress from console messages, independently of logger prefixes. Vanilla and Paper-style formats are covered by the tests; other forks may need verification.
 
 ## Testing

@@ -23,16 +23,19 @@ class PacketReader:
     def read_varint(self) -> int:
 
         value = 0
-        position = 0
-        
-        while True:
-            current = int.from_bytes(self.read_byte(), byteorder='big')
-            value |= (current & SEGMENT_BITS) << position
-            if (current & CONTINUE_BIT) == 0: break
-            position += 7
-            if position >= 32: raise Exception("VarInt is too big")
 
-        return value
+        for position in range(0, 35, 7):
+            data = self.read_byte()
+            if not data: raise ValueError("Unexpected end of packet while reading VarInt")
+            current = data[0]
+            if position == 28 and current & 0xF0:
+                raise ValueError("VarInt is too big")
+            value |= (current & SEGMENT_BITS) << position
+            if current & CONTINUE_BIT == 0:
+                if value & 0x80000000: value -= 0x100000000
+                return value
+
+        raise ValueError("VarInt is too big")
     
     def read_unsigned_short(self) -> int:
         return int.from_bytes(self.read_bytes(2), byteorder='big', signed=False)
@@ -63,28 +66,26 @@ class PacketWriter:
         self.write_bytes(value.to_bytes(8, byteorder='big', signed=True))
 
     def write_varint(self, value: int):
-        
+
+        if not -0x80000000 <= value <= 0x7FFFFFFF:
+            raise ValueError("VarInt must fit in a signed 32-bit integer")
+
+        value &= 0xFFFFFFFF
         while True:
-            
-            if (value & ~SEGMENT_BITS) == 0:
+
+            if value <= SEGMENT_BITS:
                 self.write_byte(value)
                 return
-            
+
             self.write_byte((value & SEGMENT_BITS) | CONTINUE_BIT)
-            value = (value >> 7) & 4294967295 # Unsigned right shift operator
+            value >>= 7
 
     def encode(self, packet_id) -> bytes:
 
-        def size_varint(value: int):
-            count = 0
-            while True:
-                count += 1
-                if (value & ~SEGMENT_BITS) == 0: return count
-                value = (value >> 7) & 4294967295 # Unsigned right shift operator
-
+        encoded_id = PacketWriter()
+        encoded_id.write_varint(packet_id)
         header = PacketWriter()
-        header.write_varint(size_varint(packet_id) + len(self.stream))
-        header.write_varint(packet_id)
+        header.write_varint(len(encoded_id.stream) + len(self.stream))
 
-        self.stream = header.stream + self.stream
+        self.stream = header.stream + encoded_id.stream + self.stream
         return bytes(self.stream)

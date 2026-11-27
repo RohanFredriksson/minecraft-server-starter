@@ -9,18 +9,22 @@ from .packet import PacketReader, PacketWriter
 STATUS = 1
 LOGIN = 2
 
-MAX_PACKET_SIZE = 2_097_152
+MAX_PACKET_SIZE = 2_097_151
 CONNECTION_TIMEOUT = 10
 KEEPALIVE_INTERVAL = 5
+PLUGIN_RESPONSE_DRAIN_TIMEOUT = 3
 KEEPALIVE_CHANNEL = 'starter:keepalive'
 LOGIN_PLUGIN_REQUEST = 0x04
 LOGIN_PLUGIN_RESPONSE = 0x02
+LEGACY_PING = 0xFE
+MIN_SUPPORTED_PROTOCOL = 393
+TRANSFER = 3
 
 
 def _read_varint(data, offset):
     value = 0
 
-    for position in range(0, 35, 7):
+    for position in range(0, 21, 7):
         if offset >= len(data):
             return None
 
@@ -47,6 +51,14 @@ def create_listener(host, port):
 
 def relay(a, b):
     try:
+        a.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        b.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except OSError:
+        a.close()
+        b.close()
+        raise
+
+    try:
         while True:
             r, w, err = select.select((a, b), (), ())
             for source in r:
@@ -65,6 +77,16 @@ class FrameReader:
     def __init__(self, conn):
         self.conn = conn
         self.buffer = bytearray()
+
+    def peek_byte(self, timeout):
+        """Returns the first buffered byte, reading from the socket if needed."""
+        if self.buffer: return self.buffer[0]
+        r, w, err = select.select((self.conn,), (), (), timeout)
+        if not r: return None
+        data = self.conn.recv(4096)
+        if not data: raise ConnectionError("Connection closed")
+        self.buffer.extend(data)
+        return self.buffer[0]
 
     def read(self, timeout):
         """Returns the next complete packet frame, or None if none arrives in time."""
@@ -121,11 +143,11 @@ class HeldPlayer:
             self._read_answer(min(0.25, deadline - now))
 
         # Answers forwarded to the real server would break its login sequence.
-        drain_deadline = time.monotonic() + 3
+        drain_deadline = time.monotonic() + PLUGIN_RESPONSE_DRAIN_TIMEOUT
         while self.outstanding and time.monotonic() < drain_deadline:
             self._read_answer(0.25)
 
-        return True
+        return not self.outstanding
 
     def hand_over(self, host, port):
         """Replays the client's login to the real server and relays the session."""
@@ -136,9 +158,15 @@ class HeldPlayer:
     def disconnect(self, reason):
         response = PacketWriter()
         response.write_string(json.dumps({'text': reason}))
-        try: self.conn.sendall(response.encode(0))
-        except OSError: pass
-        self.conn.close()
+        try:
+            self.conn.sendall(response.encode(0))
+            self.conn.shutdown(socket.SHUT_WR)
+            self.conn.settimeout(1)
+            while self.conn.recv(4096): pass
+        except OSError:
+            pass
+        finally:
+            self.conn.close()
 
     def close(self):
         self.conn.close()
@@ -213,6 +241,12 @@ class ProtocolServer:
         player = None
 
         try:
+            first_byte = reader.peek_byte(CONNECTION_TIMEOUT)
+            if first_byte is None: return
+            if first_byte == LEGACY_PING:
+                self._serve_legacy_status(conn)
+                return
+
             handshake = reader.read(CONNECTION_TIMEOUT)
             if handshake is None: return
 
@@ -227,13 +261,16 @@ class ProtocolServer:
                 self._serve_status(conn, reader, protocol)
                 return
 
-            if next_state != LOGIN: return
+            if next_state not in (LOGIN, TRANSFER): return
 
             login = reader.read(CONNECTION_TIMEOUT)
             if login is None or PacketReader(login).id != 0: return
 
             player = HeldPlayer(conn, addr, reader, handshake + login)
             conn = None
+            if protocol < MIN_SUPPORTED_PROTOCOL:
+                player.disconnect("Minecraft 1.13 or newer is required.")
+                return
             self.on_login(player)
 
         except Exception as error:
@@ -260,3 +297,33 @@ class ProtocolServer:
                 response.write_bytes(packet.read_bytes(8))
                 conn.sendall(response.encode(1))
                 return
+
+    def _serve_legacy_status(self, conn):
+        status = json.loads(self.status(0))
+        version = status.get("version", {})
+        players = status.get("players", {})
+        description = status.get("description", {})
+        motd = description.get("text", "") if isinstance(description, dict) else str(description)
+        fields = (
+            "127",
+            str(version.get("name", "Unknown")),
+            motd,
+            str(players.get("online", 0)),
+            str(players.get("max", 0)),
+        )
+        response = "\u00a71\0" + "\0".join(fields)
+        bounded_response = []
+        code_units = 0
+        for character in response:
+            character_units = 2 if ord(character) > 0xFFFF else 1
+            if code_units + character_units > 0xFFFF: break
+            bounded_response.append(character)
+            code_units += character_units
+        encoded = "".join(bounded_response).encode("utf-16-be")
+        try:
+            conn.sendall(b"\xff" + (len(encoded) // 2).to_bytes(2, "big") + encoded)
+            conn.shutdown(socket.SHUT_WR)
+            conn.settimeout(1)
+            while conn.recv(4096): pass
+        except OSError:
+            pass
