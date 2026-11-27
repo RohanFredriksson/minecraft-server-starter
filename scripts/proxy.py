@@ -3,6 +3,12 @@ import select
 import socket
 import time
 
+def create_public_listener(port):
+    # Accept IPv6 clients too; "localhost" resolves to ::1 first on many systems.
+    if socket.has_dualstack_ipv6():
+        return socket.create_server(('', port), family=socket.AF_INET6, dualstack_ipv6=True)
+    return socket.create_server(('', port))
+
 class DynamicProxy:
 
     def __init__(self, host_port, connect_port):
@@ -13,8 +19,7 @@ class DynamicProxy:
 
     def start(self):
 
-        self.external = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.external.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.external = create_public_listener(self.host_port)
         self.stop_flag = False
 
         def handle_connection(conn, addr):
@@ -39,25 +44,22 @@ class DynamicProxy:
                     if readable == conn: internal.sendall(data)
                     elif readable == internal: conn.sendall(data)
 
-        def accept_connections():
-
-            self.external.bind(('0.0.0.0', self.host_port))
-            self.external.listen(1)
+        def accept_connections(external):
 
             while not self.stop_flag:
 
-                r, w, err = select.select((self.external,), (), (), 0.1)
+                r, w, err = select.select((external,), (), (), 0.1)
                 if not r: continue
 
                 for readable in r:
                     if self.stop_flag: return
-                    conn, addr = self.external.accept()
+                    conn, addr = external.accept()
                     conn_thread = threading.Thread(target=handle_connection, args=(conn, addr))
                     conn_thread.start()
 
-            self.external.close()
+            external.close()
 
-        thread = threading.Thread(target=accept_connections, args=())
+        thread = threading.Thread(target=accept_connections, args=(self.external,))
         thread.start()
 
     def swap(self, new_port):
