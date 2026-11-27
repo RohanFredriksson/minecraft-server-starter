@@ -8,6 +8,26 @@ HANDSHAKING = 0
 STATUS = 1
 LOGIN = 2
 
+MAX_PACKET_SIZE = 2_097_152
+
+
+def _read_varint(data, offset):
+    value = 0
+
+    for position in range(0, 35, 7):
+        if offset >= len(data):
+            return None
+
+        current = data[offset]
+        offset += 1
+        value |= (current & 0x7F) << position
+
+        if current & 0x80 == 0:
+            return value, offset
+
+    raise ValueError("VarInt is too big")
+
+
 class ProtocolServer:
 
     def __init__(self, host_port):
@@ -20,23 +40,34 @@ class ProtocolServer:
         def handle(conn, addr):
 
             protocol_state = HANDSHAKING
+            buffer = bytearray()
 
-            while not self.stop_flag:
-                
-                try: 
-
+            try:
+                while not self.stop_flag:
                     r, w, err = select.select((conn,), (), (), 0.1)
                     if not r: continue
 
-                    for readable in r:
-                        
-                        data = readable.recv(4096)
-                        if not data: 
-                            conn.close()
-                            return
+                    data = conn.recv(4096)
+                    if not data:
+                        return
+                    buffer.extend(data)
 
-                        packet = PacketReader(data)
-                    
+                    while buffer:
+                        packet_length = _read_varint(buffer, 0)
+                        if packet_length is None:
+                            break
+
+                        packet_size, packet_offset = packet_length
+                        if packet_size < 1 or packet_size > MAX_PACKET_SIZE:
+                            raise ValueError(f"Invalid packet size: {packet_size}")
+
+                        frame_end = packet_offset + packet_size
+                        if len(buffer) < frame_end:
+                            break
+
+                        packet = PacketReader(bytes(buffer[:frame_end]))
+                        del buffer[:frame_end]
+
                         if protocol_state == HANDSHAKING and packet.id == 0:
 
                             protocol_number = packet.read_varint()
@@ -50,10 +81,10 @@ class ProtocolServer:
                         elif protocol_state == STATUS and packet.id == 1: self._run_event('pong',  conn, addr, packet)
                         elif protocol_state == LOGIN  and packet.id == 0: self._run_event('login', conn, addr, packet)
 
-                except: break
-
-            try: conn.close()
-            except: pass
+            except (OSError, ValueError) as error:
+                print(f"Protocol connection from {addr} closed: {error}")
+            finally:
+                conn.close()
 
         def start():
 
