@@ -13,3 +13,5 @@ server.jar
 server.properties
 usercache.json
 whitelist.json
+starter.properties
+starter-cache.json

@@ -1,9 +1,17 @@
+import os
+import shlex
 import subprocess
 import threading
 import re
 
 BINDING_PATTERN = re.compile(r'\bStarting minecraft server (?:version|on)\b', re.IGNORECASE)
 READY_PATTERN = re.compile(r'\bDone \([^)]*\)!', re.IGNORECASE)
+
+def split_command(command):
+    """Splits a command line the way a terminal would, so quoted paths may contain spaces."""
+    # Windows programs split their own command line, so it is passed on whole.
+    if os.name == 'nt': return command
+    return shlex.split(command)
 
 class MinecraftServer:
 
@@ -23,7 +31,7 @@ class MinecraftServer:
             if self.process is not None: raise Exception("Minecraft server has already started.")
 
             process = subprocess.Popen(
-                self.command.split(),
+                split_command(self.command),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,

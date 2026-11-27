@@ -218,13 +218,13 @@ class ProtocolServer:
 
             packet = PacketReader(handshake)
             if packet.id != 0: return
-            packet.read_varint()
+            protocol = packet.read_varint()
             packet.read_string()
             packet.read_unsigned_short()
             next_state = packet.read_varint()
 
             if next_state == STATUS:
-                self._serve_status(conn, reader)
+                self._serve_status(conn, reader, protocol)
                 return
 
             if next_state != LOGIN: return
@@ -243,7 +243,7 @@ class ProtocolServer:
         finally:
             if conn is not None: conn.close()
 
-    def _serve_status(self, conn, reader):
+    def _serve_status(self, conn, reader, protocol):
 
         while True:
             frame = reader.read(CONNECTION_TIMEOUT)
@@ -252,7 +252,7 @@ class ProtocolServer:
 
             if packet.id == 0:
                 response = PacketWriter()
-                response.write_string(self.status())
+                response.write_string(self.status(protocol))
                 conn.sendall(response.encode(0))
 
             elif packet.id == 1:
