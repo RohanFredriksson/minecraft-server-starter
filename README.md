@@ -27,7 +27,7 @@ python3 starter.py
 ```
 The starter waits in sleep mode on the server's own address and port, taken from `server-ip` and `server-port` in **server.properties**, so players connect exactly as they would to the server itself. When a player joins, the starter starts the server and keeps them on the loading screen until it is ready, then passes them straight in. Once the server is running the starter steps aside and players connect to the server directly. After a period with nobody online the server is stopped and the starter takes the port back.
 
-Commands typed into the starter are forwarded to the Minecraft server while it is running. Press Ctrl+C to stop both.
+Commands typed into the starter are forwarded to the Minecraft server while it is running. Press Ctrl+C to stop both. When running as a background service, closed standard input does not stop the starter; send it a shutdown signal (such as SIGTERM on Linux or macOS) to stop it cleanly.
 
 If `server-ip` is blank, the starter listens on all network interfaces (IPv4 and IPv6). To connect from another device, allow the port through the host firewall; internet connections may also require port forwarding on your router.
 

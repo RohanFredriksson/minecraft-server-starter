@@ -288,6 +288,28 @@ class StarterTest(unittest.TestCase):
         self.assertEqual(self.starter.wait(10), 0)
         self.assertIsNone(status(self.port))
 
+    @unittest.skipIf(sys.platform == 'win32', 'Windows SIGTERM terminates the process without running handlers')
+    def test_closed_stdin_keeps_starter_running_until_sigterm(self):
+        self.start_starter()
+        self.starter.stdin.close()
+        time.sleep(0.5)
+        self.assertIsNone(self.starter.poll())
+        self.assertEqual(status(self.port), WAITING_MOTD)
+
+        self.starter.send_signal(signal.SIGTERM)
+        self.assertEqual(self.starter.wait(10), 0)
+        self.assertIsNone(status(self.port))
+
+    @unittest.skipIf(sys.platform == 'win32', 'Windows SIGTERM terminates the process without running handlers')
+    def test_sigterm_stops_running_server(self):
+        self.start_starter()
+        self.assertEqual(login(self.port, 'Waker'), 'Welcome Waker')
+        self.assertEqual(status(self.port), 'Fake server')
+
+        self.starter.send_signal(signal.SIGTERM)
+        self.assertEqual(self.starter.wait(15), 0)
+        self.assertIsNone(status(self.port))
+
 
 if __name__ == '__main__':
     unittest.main()

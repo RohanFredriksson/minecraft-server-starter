@@ -1,5 +1,6 @@
 import threading
 import json
+import signal
 import time
 
 from scripts.minecraft_server import MinecraftServer
@@ -95,17 +96,19 @@ def on_ready():
     def timeout():
 
         timeout_count = 0
-        while state != STOPPED:
+        while state == RUNNING:
 
             # Ping the server once every minute.
             for i in range(600):
-                if state == STOPPED: return
+                if state != RUNNING: return
                 time.sleep(0.1)
         
             # If there are players online reset the count, else increment.
             response = ping(local_ip, server_port)
-            if response['online'] == False: return
-            if response['players']['online'] > 0: timeout_count = 0 
+            if not response['online']:
+                print('Could not ping the server for its idle status; will retry.')
+                continue
+            if response['players']['online'] > 0: timeout_count = 0
             else: timeout_count += 1
 
             # If we have passed the timeout threshold, we shut it down.
@@ -144,15 +147,30 @@ protocol_server.open()
 print('-'*80)
 print('Server sleeping. Waiting for login attempt...')
 
-while True:
-    
-    try:
-        line = input()
-        minecraft_server.enter_command(f"{line}\n")
-    
-    except KeyboardInterrupt:
-        print('-'*80)
+def handle_shutdown_signal(signum, frame):
+    raise KeyboardInterrupt
+
+signal.signal(signal.SIGINT, handle_shutdown_signal)
+signal.signal(signal.SIGTERM, handle_shutdown_signal)
+
+def shutdown():
+    global state
+    with lock:
         state = STOPPED
-        minecraft_server.stop()
-        protocol_server.release()
-        break
+    protocol_server.release()
+    minecraft_server.stop_and_wait()
+
+try:
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            print('Standard input is closed; waiting for a shutdown signal.')
+            while state != STOPPED:
+                time.sleep(1)
+            break
+        minecraft_server.enter_command(f"{line}\n")
+except KeyboardInterrupt:
+    print('-'*80)
+finally:
+    shutdown()
