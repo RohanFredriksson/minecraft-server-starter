@@ -11,6 +11,7 @@ LOGIN = 2
 
 MAX_PACKET_SIZE = 2_097_151
 CONNECTION_TIMEOUT = 10
+DISCONNECT_TIMEOUT = 1
 KEEPALIVE_INTERVAL = 5
 PLUGIN_RESPONSE_DRAIN_TIMEOUT = 3
 KEEPALIVE_CHANNEL = 'starter:keepalive'
@@ -49,6 +50,31 @@ def create_listener(host, port):
     return socket.create_server(('', port))
 
 
+def _send_and_close(conn, data):
+    deadline = time.monotonic() + DISCONNECT_TIMEOUT
+    try:
+        conn.settimeout(DISCONNECT_TIMEOUT)
+        conn.sendall(data)
+        conn.shutdown(socket.SHUT_WR)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0: return
+            conn.settimeout(remaining)
+            if not conn.recv(4096): return
+    except OSError:
+        pass
+    finally:
+        conn.close()
+
+
+def _truncate_utf16(text, code_units):
+    if code_units < 0: raise ValueError("Legacy status fields exceed the maximum string length")
+    encoded = text.encode("utf-16-be")[:code_units * 2]
+    if encoded and 0xD800 <= int.from_bytes(encoded[-2:], "big") <= 0xDBFF:
+        encoded = encoded[:-2]
+    return encoded.decode("utf-16-be")
+
+
 def relay(a, b):
     try:
         a.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -78,15 +104,21 @@ class FrameReader:
         self.conn = conn
         self.buffer = bytearray()
 
-    def peek_byte(self, timeout):
-        """Returns the first buffered byte, reading from the socket if needed."""
-        if self.buffer: return self.buffer[0]
+    def _receive(self, timeout):
         r, w, err = select.select((self.conn,), (), (), timeout)
-        if not r: return None
+        if not r: return False
         data = self.conn.recv(4096)
         if not data: raise ConnectionError("Connection closed")
         self.buffer.extend(data)
-        return self.buffer[0]
+        return True
+
+    def peek_bytes(self, size, timeout):
+        """Returns up to `size` bytes without consuming them."""
+        deadline = time.monotonic() + timeout
+        while len(self.buffer) < size:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not self._receive(remaining): break
+        return bytes(self.buffer[:size])
 
     def read(self, timeout):
         """Returns the next complete packet frame, or None if none arrives in time."""
@@ -106,12 +138,7 @@ class FrameReader:
 
             remaining = deadline - time.monotonic()
             if remaining <= 0: return None
-            r, w, err = select.select((self.conn,), (), (), remaining)
-            if not r: return None
-
-            data = self.conn.recv(4096)
-            if not data: raise ConnectionError("Connection closed")
-            self.buffer.extend(data)
+            if not self._receive(remaining): return None
 
 
 class HeldPlayer:
@@ -158,15 +185,7 @@ class HeldPlayer:
     def disconnect(self, reason):
         response = PacketWriter()
         response.write_string(json.dumps({'text': reason}))
-        try:
-            self.conn.sendall(response.encode(0))
-            self.conn.shutdown(socket.SHUT_WR)
-            self.conn.settimeout(1)
-            while self.conn.recv(4096): pass
-        except OSError:
-            pass
-        finally:
-            self.conn.close()
+        _send_and_close(self.conn, response.encode(0))
 
     def close(self):
         self.conn.close()
@@ -241,19 +260,23 @@ class ProtocolServer:
         player = None
 
         try:
-            first_byte = reader.peek_byte(CONNECTION_TIMEOUT)
-            if first_byte is None: return
-            if first_byte == LEGACY_PING:
-                self._serve_legacy_status(conn)
-                return
+            deadline = time.monotonic() + CONNECTION_TIMEOUT
+            first_byte = reader.peek_bytes(1, CONNECTION_TIMEOUT)
+            if not first_byte: return
+            if first_byte[0] == LEGACY_PING:
+                prefix = reader.peek_bytes(3, max(0, deadline - time.monotonic()))
+                # FE 01 can also be a modern packet's length; wait for its packet ID.
+                if prefix in (b'\xfe', b'\xfe\x01', b'\xfe\x01\xfa'):
+                    self._serve_legacy_status(conn, extended=len(prefix) > 1)
+                    return
 
-            handshake = reader.read(CONNECTION_TIMEOUT)
+            handshake = reader.read(max(0, deadline - time.monotonic()))
             if handshake is None: return
 
             packet = PacketReader(handshake)
             if packet.id != 0: return
             protocol = packet.read_varint()
-            packet.read_string()
+            packet.read_string(255)
             packet.read_unsigned_short()
             next_state = packet.read_varint()
 
@@ -298,32 +321,24 @@ class ProtocolServer:
                 conn.sendall(response.encode(1))
                 return
 
-    def _serve_legacy_status(self, conn):
+    def _serve_legacy_status(self, conn, extended):
         status = json.loads(self.status(0))
         version = status.get("version", {})
         players = status.get("players", {})
         description = status.get("description", {})
         motd = description.get("text", "") if isinstance(description, dict) else str(description)
-        fields = (
-            "127",
-            str(version.get("name", "Unknown")),
-            motd,
-            str(players.get("online", 0)),
-            str(players.get("max", 0)),
-        )
-        response = "\u00a71\0" + "\0".join(fields)
-        bounded_response = []
-        code_units = 0
-        for character in response:
-            character_units = 2 if ord(character) > 0xFFFF else 1
-            if code_units + character_units > 0xFFFF: break
-            bounded_response.append(character)
-            code_units += character_units
-        encoded = "".join(bounded_response).encode("utf-16-be")
-        try:
-            conn.sendall(b"\xff" + (len(encoded) // 2).to_bytes(2, "big") + encoded)
-            conn.shutdown(socket.SHUT_WR)
-            conn.settimeout(1)
-            while conn.recv(4096): pass
-        except OSError:
-            pass
+        online = str(players.get("online", 0))
+        maximum = str(players.get("max", 0))
+        if extended:
+            prefix = "\u00a71\0" + "127\0"
+            suffix = f"\0{online}\0{maximum}"
+            budget = 32767 - len((prefix + "\0" + suffix).encode("utf-16-be")) // 2
+            name = _truncate_utf16(str(version.get("name", "Unknown")), budget)
+            motd = _truncate_utf16(motd, budget - len(name.encode("utf-16-be")) // 2)
+            response = prefix + name + "\0" + motd + suffix
+        else:
+            suffix = f"\u00a7{online}\u00a7{maximum}"
+            budget = 256 - len(suffix.encode("utf-16-be")) // 2
+            response = _truncate_utf16(motd, budget) + suffix
+        encoded = response.encode("utf-16-be")
+        _send_and_close(conn, b"\xff" + (len(encoded) // 2).to_bytes(2, "big") + encoded)

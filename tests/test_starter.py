@@ -22,7 +22,7 @@ from unittest import mock
 
 from scripts.minecraft_server import BINDING_PATTERN
 from scripts.packet import PacketReader, PacketWriter
-from scripts.protocol_server import FrameReader, HeldPlayer
+from scripts.protocol_server import FrameReader, HeldPlayer, ProtocolServer
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROTOCOL = 767
@@ -52,8 +52,8 @@ def frame(packet_id, payload=b''):
     return varint(len(body)) + body
 
 
-def handshake(port, next_state, protocol=PROTOCOL):
-    return frame(0x00, varint(protocol) + string('localhost') + port.to_bytes(2, 'big') + varint(next_state))
+def handshake(port, next_state, protocol=PROTOCOL, address='localhost'):
+    return frame(0x00, varint(protocol) + string(address) + port.to_bytes(2, 'big') + varint(next_state))
 
 
 def png(width, height, padding=20):
@@ -189,6 +189,20 @@ class PacketProtocolTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             PacketReader(b'\x02\x00\x80').read_varint()
 
+    def test_packet_fields_reject_negative_lengths_and_truncation(self):
+        for payload in (varint(-1) + b'abc', varint(5) + b'ab'):
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                PacketReader(frame(0, payload)).read_string()
+        with self.assertRaises(ValueError):
+            PacketReader(frame(0, b'\x00')).read_unsigned_short()
+
+    def test_string_limits_count_utf16_code_units(self):
+        for text in ('a' * 256, '\U0001f600' * 128):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                PacketReader(frame(0, string(text))).read_string(255)
+        text = '\U0001f600' * 127 + 'a'
+        self.assertEqual(PacketReader(frame(0, string(text))).read_string(255), text)
+
     def test_frame_length_limit_matches_three_byte_protocol_limit(self):
         left, right = socket.socketpair()
         self.addCleanup(left.close)
@@ -239,6 +253,80 @@ class PacketProtocolTest(unittest.TestCase):
         client.close()
         worker.join(timeout=2)
         self.assertFalse(worker.is_alive())
+
+    def test_disconnect_drain_has_a_total_deadline(self):
+        server, client = socket.socketpair()
+        stop = threading.Event()
+
+        def send_input():
+            while not stop.is_set():
+                try: client.sendall(b'ongoing input')
+                except OSError: return
+                stop.wait(0.02)
+
+        sender = threading.Thread(target=send_input)
+        worker = threading.Thread(target=HeldPlayer(server, None, None, b'').disconnect, args=('Closed',))
+        sender.start()
+        worker.start()
+        try:
+            worker.join(timeout=2)
+            self.assertFalse(worker.is_alive(), 'ongoing input extended the disconnect deadline')
+        finally:
+            stop.set()
+            client.close()
+            sender.join(timeout=2)
+            worker.join(timeout=2)
+            server.close()
+
+    def test_old_legacy_ping_formats(self):
+        status = json.dumps({
+            'version': {'name': 'Unknown', 'protocol': 0},
+            'players': {'online': 0, 'max': 20},
+            'description': {'text': 'Test'},
+        })
+        expected_responses = {
+            b'\xfe': 'Test\u00a70\u00a720',
+            b'\xfe\x01': '\u00a71\0' + '\0'.join(('127', 'Unknown', 'Test', '0', '20')),
+        }
+        for ping, expected in expected_responses.items():
+            with self.subTest(ping=ping):
+                server_sock, client = socket.socketpair()
+                client.settimeout(2)
+                server = ProtocolServer('', 0, lambda protocol: status, lambda player: None)
+                worker = threading.Thread(target=server._handle, args=(server_sock, ('local', 0)))
+                try:
+                    with mock.patch('scripts.protocol_server.CONNECTION_TIMEOUT', 0.05):
+                        worker.start()
+                        client.sendall(ping)
+                        self.assertEqual(recv_exact(client, 1), b'\xff')
+                        size = int.from_bytes(recv_exact(client, 2), 'big')
+                        response = recv_exact(client, size * 2).decode('utf-16-be')
+                        self.assertEqual(response, expected)
+                finally:
+                    client.close()
+                    worker.join(timeout=2)
+                    server_sock.close()
+                self.assertFalse(worker.is_alive())
+
+    def test_legacy_truncation_preserves_player_fields_and_unicode(self):
+        server = ProtocolServer('', 0, lambda protocol: json.dumps({
+            'version': {'name': 'Unknown', 'protocol': 0},
+            'players': {'online': 0, 'max': 20},
+            'description': {'text': '\U0001f600' * 33000},
+        }), lambda player: None)
+        for extended, maximum in ((False, 256), (True, 32767)):
+            with self.subTest(extended=extended), mock.patch('scripts.protocol_server._send_and_close') as send:
+                server._serve_legacy_status(None, extended)
+                packet = send.call_args[0][1]
+                size = int.from_bytes(packet[1:3], 'big')
+                text = packet[3:].decode('utf-16-be')
+                self.assertLessEqual(size, maximum)
+                self.assertEqual(len(packet[3:]), size * 2)
+                if extended:
+                    self.assertEqual(text.split('\0')[-2:], ['0', '20'])
+                    self.assertEqual(len(text.split('\0')), 6)
+                else:
+                    self.assertTrue(text.endswith('\u00a70\u00a720'))
 
     def test_binding_pattern_only_matches_bind_log(self):
         self.assertIsNone(BINDING_PATTERN.search('Starting minecraft server version 1.21'))
@@ -322,14 +410,31 @@ class StarterTest(unittest.TestCase):
 
     def test_legacy_server_list_ping(self):
         self.start_starter()
-        for ping in (b'\xfe', b'\xfe\x01\xfa'):
-            with self.subTest(ping=ping), socket.create_connection(('127.0.0.1', self.port), timeout=5) as sock:
-                sock.sendall(ping)
-                self.assertEqual(recv_exact(sock, 1), b'\xff')
-                size = int.from_bytes(recv_exact(sock, 2), 'big')
-                response = recv_exact(sock, size * 2).decode('utf-16-be')
-                self.assertEqual(response.split('\0')[0], '\u00a71')
-                self.assertIn(SLEEPING_MOTD, response)
+        with socket.create_connection(('127.0.0.1', self.port), timeout=5) as sock:
+            sock.sendall(b'\xfe\x01\xfa')
+            self.assertEqual(recv_exact(sock, 1), b'\xff')
+            size = int.from_bytes(recv_exact(sock, 2), 'big')
+            response = recv_exact(sock, size * 2).decode('utf-16-be')
+            self.assertEqual(response.split('\0')[0], '\u00a71')
+            self.assertIn(SLEEPING_MOTD, response)
+
+    def test_fragmented_long_hostname_is_not_a_legacy_ping(self):
+        self.start_starter()
+        address = '.'.join(('a' * 63, 'b' * 63, 'c' * 63, 'd' * 54))
+        hello = handshake(self.port, 1, address=address)
+        with socket.create_connection(('127.0.0.1', self.port), timeout=5) as sock:
+            sock.sendall(hello[:2])
+            time.sleep(0.05)
+            sock.sendall(hello[2:] + frame(0))
+            packet_id, read = read_packet(sock)
+            self.assertEqual(packet_id, 0)
+            self.assertEqual(json.loads(read_string(read))['description']['text'], SLEEPING_MOTD)
+
+    def test_truncated_ping_is_rejected(self):
+        self.start_starter()
+        with socket.create_connection(('127.0.0.1', self.port), timeout=5) as sock:
+            sock.sendall(handshake(self.port, 1) + frame(1, b'\x42'))
+            self.assertEqual(sock.recv(1), b'')
 
     def test_negative_status_protocol_is_reported_as_signed(self):
         self.start_starter()

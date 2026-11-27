@@ -12,13 +12,20 @@ class PacketReader:
         return self.read_bytes(1)
     
     def read_bytes(self, size: int) -> bytes:
+        if size < 0 or size > len(self.stream):
+            raise ValueError(f"Invalid packet field size: {size} ({len(self.stream)} bytes remain)")
         result = self.stream[:size]
         self.stream = self.stream[size:]
         return result
     
-    def read_string(self) -> str:
+    def read_string(self, max_characters: int = 32767) -> str:
         size = self.read_varint()
-        return self.read_bytes(size).decode("utf-8")
+        if size > max_characters * 3:
+            raise ValueError("String exceeds its maximum encoded length")
+        text = self.read_bytes(size).decode("utf-8")
+        if len(text.encode("utf-16-be")) // 2 > max_characters:
+            raise ValueError("String exceeds its maximum character count")
+        return text
 
     def read_varint(self) -> int:
 
@@ -26,7 +33,6 @@ class PacketReader:
 
         for position in range(0, 35, 7):
             data = self.read_byte()
-            if not data: raise ValueError("Unexpected end of packet while reading VarInt")
             current = data[0]
             if position == 28 and current & 0xF0:
                 raise ValueError("VarInt is too big")
