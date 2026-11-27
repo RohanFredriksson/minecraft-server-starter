@@ -49,6 +49,13 @@ The starter is configured with **starter.properties**:
 - Players must use Minecraft 1.13 or newer to be held while the server starts.
 - The starter detects the server's progress from its console output, so it is designed for the vanilla server.
 
+## Testing
+The tests run the starter against a small fake server (`tests/FakeServer.java`), so no Minecraft download is needed. They need Python and Java 11 or newer:
+```bash
+python3 -m unittest discover -s tests -v
+```
+GitHub Actions runs them on Linux (x64 and ARM), Windows and macOS for every push and pull request.
+
 ## Screenshots
 
 
