@@ -50,6 +50,11 @@ def handshake(port, next_state, protocol=PROTOCOL):
     return frame(0x00, varint(protocol) + string('localhost') + port.to_bytes(2, 'big') + varint(next_state))
 
 
+def png(width, height, padding=20):
+    """The start of a PNG image, which is all the size checks read, padded to stand in for image data."""
+    return b'\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR' + width.to_bytes(4, 'big') + height.to_bytes(4, 'big') + bytes(padding)
+
+
 def recv_exact(sock, size):
     data = b''
     while len(data) < size:
@@ -168,9 +173,10 @@ class StarterTest(unittest.TestCase):
         shutil.copy(os.path.join(REPO, 'tests', 'FakeServer.java'), self.folder)
         self.write('server.properties', f'server-ip=\nserver-port={self.port}\n{server_properties}')
 
-    def write(self, name, text):
-        with open(os.path.join(self.folder, name), 'w', encoding='utf-8') as file:
-            file.write(text)
+    def write(self, name, data):
+        mode, encoding = ('wb', None) if isinstance(data, bytes) else ('w', 'utf-8')
+        with open(os.path.join(self.folder, name), mode, encoding=encoding) as file:
+            file.write(data)
 
     def read(self, name):
         with open(os.path.join(self.folder, name), encoding='utf-8', errors='replace') as file:
@@ -344,6 +350,8 @@ class StarterTest(unittest.TestCase):
 
     def test_stops_when_empty(self):
         self.start_starter(settings={'stop-when-empty-seconds': 1})
+        # A typical icon makes the running server's status response longer than a single read.
+        self.write('server-icon.png', png(64, 64, 8000))
         self.assertEqual(login(self.port, 'Visitor'), 'Welcome Visitor')
         self.assertTrue(wait_for(lambda: status(self.port) == SLEEPING_MOTD, 20), 'empty server was not stopped')
         self.assertIn('Server empty for 1 seconds, stopping it.', self.read('starter.log'))
@@ -351,9 +359,8 @@ class StarterTest(unittest.TestCase):
     def test_sleeping_status_mirrors_server(self):
         self.prepare('max-players=7\n')
         self.write('starter.properties', 'command=java FakeServer.java\nsleeping-motd=Line one\\nLine two \\u00A7aGreen\n')
-        icon = b'\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR' + (64).to_bytes(4, 'big') * 2 + bytes(20)
-        with open(os.path.join(self.folder, 'server-icon.png'), 'wb') as file:
-            file.write(icon)
+        icon = png(64, 64)
+        self.write('server-icon.png', icon)
         self.launch()
 
         response = status_response(self.port, protocol=776)
@@ -364,8 +371,7 @@ class StarterTest(unittest.TestCase):
         self.assertEqual(response['version']['protocol'], 776)
 
         # Minecraft only uses 64x64 icons, so other sizes are left out.
-        with open(os.path.join(self.folder, 'server-icon.png'), 'wb') as file:
-            file.write(icon[:16] + (32).to_bytes(4, 'big') * 2 + icon[24:])
+        self.write('server-icon.png', png(32, 32))
         self.assertNotIn('favicon', status_response(self.port))
 
     def test_command_with_quoted_path(self):

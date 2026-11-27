@@ -88,7 +88,7 @@ class FrameReader:
             if not r: return None
 
             data = self.conn.recv(4096)
-            if not data: raise ConnectionError("Connection closed by client")
+            if not data: raise ConnectionError("Connection closed")
             self.buffer.extend(data)
 
 

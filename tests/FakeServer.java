@@ -2,8 +2,10 @@ import java.io.*;
 import java.net.*;
 import java.nio.channels.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Base64;
 import java.util.Properties;
 
 /**
@@ -19,6 +21,7 @@ public class FakeServer {
 
     static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
     static boolean paperFormat;
+    static String favicon = "";
 
     public static void main(String[] args) throws Exception {
 
@@ -34,6 +37,13 @@ public class FakeServer {
         try (Reader reader = new FileReader("server.properties")) { properties.load(reader); }
         String ip = properties.getProperty("server-ip", "").trim();
         int port = Integer.parseInt(properties.getProperty("server-port", "25565").trim());
+
+        // Like the real server, include the icon in status responses, which makes them long.
+        Path icon = Paths.get("server-icon.png");
+        if (Files.isRegularFile(icon)) {
+            favicon = ",\"favicon\":\"data:image/png;base64,"
+                + Base64.getEncoder().encodeToString(Files.readAllBytes(icon)) + "\"";
+        }
 
         Thread.sleep(mode.equals("slow") ? 6000 : 500);
         log("INFO", "Starting minecraft server version Fake");
@@ -109,7 +119,7 @@ public class FakeServer {
                 readPacket(in, 0x00);
                 String status = "{\"version\":{\"name\":\"Fake\",\"protocol\":767},"
                     + "\"players\":{\"max\":20,\"online\":0,\"sample\":[]},"
-                    + "\"description\":{\"text\":\"Fake server\"}}";
+                    + "\"description\":{\"text\":\"Fake server\"}" + favicon + "}";
                 writePacket(out, 0x00, string(status));
                 DataInputStream ping = readPacket(in, 0x01);
                 byte[] payload = new byte[8];
