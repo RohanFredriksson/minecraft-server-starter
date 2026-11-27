@@ -244,6 +244,14 @@ class StarterTest(unittest.TestCase):
         self.assertIn('version=Fake', properties)
         self.assertIn('protocol=767', properties)
 
+    def test_paper_style_log_format(self):
+        self.start_starter(command='java FakeServer.java paper')
+        self.assertEqual(login(self.port, 'PaperWaker'), 'Welcome PaperWaker')
+        self.assertEqual(status(self.port), 'Fake server')
+        self.assertEqual(login(self.port, 'PaperDirect', 10), 'Welcome PaperDirect')
+
+        self.stop_server_and_wait_until_sleeping()
+
     def test_several_players_waiting(self):
         self.start_starter()
         results = {}

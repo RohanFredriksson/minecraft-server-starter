@@ -2,6 +2,9 @@ import subprocess
 import threading
 import re
 
+BINDING_PATTERN = re.compile(r'\bStarting minecraft server (?:version|on)\b', re.IGNORECASE)
+READY_PATTERN = re.compile(r'\bDone \([^)]*\)!', re.IGNORECASE)
+
 class MinecraftServer:
 
     def __init__(self, command):
@@ -31,18 +34,14 @@ class MinecraftServer:
 
         def routine():
 
-            binding = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] \[Server thread/INFO\]: Starting minecraft server version")
-            ready = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] \[Server thread/INFO\]: Done.*")
-
             while True:
                 
                 line = process.stdout.readline()
                 if not line: break
                 print(line, end="")
 
-                # Logged shortly before the server binds its port.
-                if binding.match(line): self._run_event('binding')
-                if ready.match(line): self._run_event('ready')
+                if BINDING_PATTERN.search(line): self._run_event('binding')
+                if READY_PATTERN.search(line): self._run_event('ready')
 
             process.wait()
             with self.lock:

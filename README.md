@@ -47,7 +47,7 @@ The starter is configured with **starter.properties**:
 ### Compatibility
 - Python 3.8 or newer is required.
 - Players must use Minecraft 1.13 or newer to be held while the server starts.
-- The starter detects the server's progress from its console output, so it is designed for the vanilla server.
+- The starter detects startup progress from console messages, independently of logger prefixes. Vanilla and Paper-style formats are covered by the tests; other forks may need verification.
 
 ## Testing
 The tests run the starter against a small fake server (`tests/FakeServer.java`), so no Minecraft download is needed. They need Python and Java 11 or newer:

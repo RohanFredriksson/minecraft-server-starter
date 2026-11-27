@@ -13,15 +13,22 @@ import java.util.Properties;
  * through NIO like the real server does, and implements just enough of the protocol to answer
  * status requests and to accept a login.
  *
- * Usage: java FakeServer.java [normal|slow|crash]
+ * Usage: java FakeServer.java [normal|slow|crash|paper]
  */
 public class FakeServer {
 
     static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
+    static boolean paperFormat;
 
     public static void main(String[] args) throws Exception {
 
         String mode = args.length > 0 ? args[0] : "normal";
+        paperFormat = mode.equals("paper") || mode.startsWith("paper-");
+        if (paperFormat) {
+            mode = mode.substring("paper".length());
+            if (mode.startsWith("-")) mode = mode.substring(1);
+            if (mode.isEmpty()) mode = "normal";
+        }
 
         Properties properties = new Properties();
         try (Reader reader = new FileReader("server.properties")) { properties.load(reader); }
@@ -79,7 +86,10 @@ public class FakeServer {
     }
 
     static void log(String level, String message) {
-        System.out.println("[" + LocalTime.now().format(TIME) + "] [Server thread/" + level + "]: " + message);
+        String prefix = paperFormat
+            ? "[" + LocalTime.now().format(TIME) + " " + level + "]: "
+            : "[" + LocalTime.now().format(TIME) + "] [Server thread/" + level + "]: ";
+        System.out.println(prefix + message);
         System.out.flush();
     }
 
