@@ -52,8 +52,9 @@ class PacketWriter:
         self.stream = self.stream + stream
 
     def write_string(self, string: str):
-        self.write_varint(len(string))
-        self.stream = self.stream + string.encode()
+        data = string.encode()
+        self.write_varint(len(data))
+        self.stream = self.stream + data
 
     def write_unsigned_short(self, value: int):
         self.write_bytes(value.to_bytes(2, byteorder='big', signed=False))

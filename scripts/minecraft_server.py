@@ -1,57 +1,99 @@
+import os
+import shlex
 import subprocess
 import threading
 import re
+
+BINDING_PATTERN = re.compile(r'\bStarting minecraft server (?:version|on)\b', re.IGNORECASE)
+READY_PATTERN = re.compile(r'\bDone \([^)]*\)!', re.IGNORECASE)
+
+def split_command(command):
+    """Splits a command line the way a terminal would, so quoted paths may contain spaces."""
+    # Windows programs split their own command line, so it is passed on whole.
+    if os.name == 'nt': return command
+    return shlex.split(command)
 
 class MinecraftServer:
 
     def __init__(self, command):
         
         self.command = command
-        self.callbacks = {'start': [], 'ready': [], 'exit': []}
+        self.callbacks = {'start': [], 'binding': [], 'ready': [], 'exit': []}
         self.process = None
+        self.lock = threading.Lock()
 
     def __del__(self):
-        if self.process != None: self.process.terminate()
+        if self.process is not None: self.process.terminate()
 
     def start(self):
 
-        if self.process != None: raise Exception("Minecraft server has already started.")
+        with self.lock:
+            if self.process is not None: raise Exception("Minecraft server has already started.")
+
+            process = subprocess.Popen(
+                split_command(self.command),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True
+            )
+            self.process = process
+        self._run_event('start')
 
         def routine():
 
-            self.process = subprocess.Popen(self.command.split(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            self._run_event('start')
-
-            def waiter(p):
-                p.wait()
-                self._run_event('exit')
-                if p == self.process: self.process = None
-
-            thread = threading.Thread(target=waiter, args=(self.process,))
-            thread.start()
-
-            while self.process != None:
+            while True:
                 
-                line = self.process.stdout.readline()
+                line = process.stdout.readline()
                 if not line: break
                 print(line, end="")
 
-                pattern = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] \[Server thread/INFO\]: Done.*")
-                result = pattern.match(line)
-                if result: self._run_event('ready')
+                if BINDING_PATTERN.search(line): self._run_event('binding')
+                if READY_PATTERN.search(line): self._run_event('ready')
 
-        thread = threading.Thread(target=routine, args=())
+            process.wait()
+            with self.lock:
+                if process == self.process: self.process = None
+            self._run_event('exit')
+
+        thread = threading.Thread(target=routine, daemon=True)
         thread.start()
 
     def stop(self):
-        if self.process == None: return
-        self.process.stdin.write('stop\n')
-        self.process.stdin.flush()
+        with self.lock:
+            process = self.process
+        if process is None or process.poll() is not None: return
+        try:
+            process.stdin.write('stop\n')
+            process.stdin.flush()
+        except (BrokenPipeError, OSError):
+            pass
+
+    def stop_and_wait(self, timeout=10):
+        with self.lock:
+            process = self.process
+        if process is None: return
+
+        self.stop()
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
 
     def enter_command(self, command):
-        if self.process == None: return
-        self.process.stdin.write(command)
-        self.process.stdin.flush()
+        with self.lock:
+            process = self.process
+        if process is None or process.poll() is not None: return
+        try:
+            process.stdin.write(command)
+            process.stdin.flush()
+        except (BrokenPipeError, OSError):
+            pass
 
     def _run_event(self, event):
         if event not in self.callbacks: return
