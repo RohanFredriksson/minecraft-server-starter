@@ -35,7 +35,10 @@ class MinecraftServer:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                text=True
+                text=True,
+                # Output the console encoding cannot decode must not stop the console being read, or the
+                # server would stall once the pipe fills. Commands it cannot encode are escaped instead.
+                errors='backslashreplace'
             )
             self.process = process
         self._run_event('start')

@@ -60,10 +60,10 @@ The starter also reads these settings from the Minecraft server's **server.prope
 | --- | --- |
 | `server-ip`, `server-port` | The address the starter listens on while the server is stopped, so players always use the server's normal address. |
 | `max-players` | Shown in the server list while the server is stopped. |
-| `enable-status` | Must be `true`, the default. The starter asks the running server how many players are online, so without it the server is never stopped. |
+| `enable-status` | Must be `true`, the default. The starter asks the running server how many players are online, so without it, or if a plugin hides the player count, the server is never stopped. |
 | `prevent-proxy-connections` | Must be `false`, the default, when `online-mode` is `true`. Players who wake the server are connected through the starter, so Minecraft would reject their logins. |
 
-While the server is stopped, the server list also shows its **server-icon.png** and the version it reported the last time it ran, which the starter keeps in **starter-cache.json**. Until the server has run once, every client version is shown as compatible.
+While the server is stopped, the server list also shows its **server-icon.png** and the version it reported the last time it ran, which the starter keeps in **starter-cache.json**. Until the server has run once, every client version is shown as compatible. Icons larger than about 24 KB are left out, since clients reject server list responses that long.
 
 Minecraft's own `pause-when-empty-seconds` (1.21.2 and newer) pauses the game while the server keeps running. It works alongside the starter, which stops the server entirely.
 
@@ -78,7 +78,7 @@ Then copy any values you changed into the new file. The starter no longer needs 
 ### Compatibility
 - Python 3.8 or newer is required.
 - Players must use Minecraft 1.13 or newer to be held while the server starts; older login attempts are disconnected with a message. Transfer-originated logins are passed to the server for its transfer policy.
-- Modern and legacy server-list pings are supported. Pre-1.6 pings may wait up to 10 seconds because their prefixes overlap modern packet framing.
+- Modern and legacy server-list pings are supported. Pre-1.6 pings are answered after about a second, because their first bytes can also begin a modern packet.
 - The starter detects startup progress from console messages, independently of logger prefixes. Vanilla and Paper-style formats are covered by the tests; other forks may need verification.
 
 ## Testing

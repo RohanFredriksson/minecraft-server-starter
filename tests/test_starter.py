@@ -6,6 +6,9 @@ Requires Python 3.8+ and Java 11+ on the PATH. Run with:
     python -m unittest discover -s tests -v
 """
 import base64
+import contextlib
+import errno
+import io
 import json
 import os
 import shutil
@@ -189,6 +192,12 @@ class PacketProtocolTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             PacketReader(b'\x02\x00\x80').read_varint()
 
+    def test_varint_drops_overflow_bits_like_vanilla(self):
+        # The wiki's reader keeps only 32 bits of the fifth byte, but never reads a sixth.
+        self.assertEqual(PacketReader(b'\x06\x00' + bytes.fromhex('ffffffff7f')).read_varint(), -1)
+        with self.assertRaises(ValueError):
+            PacketReader(b'\x07\x00' + bytes.fromhex('ffffffffff01')).read_varint()
+
     def test_packet_fields_reject_negative_lengths_and_truncation(self):
         for payload in (varint(-1) + b'abc', varint(5) + b'ab'):
             with self.subTest(payload=payload), self.assertRaises(ValueError):
@@ -202,6 +211,9 @@ class PacketProtocolTest(unittest.TestCase):
                 PacketReader(frame(0, string(text))).read_string(255)
         text = '\U0001f600' * 127 + 'a'
         self.assertEqual(PacketReader(frame(0, string(text))).read_string(255), text)
+
+    def test_invalid_utf8_is_replaced_like_vanilla(self):
+        self.assertEqual(PacketReader(frame(0, varint(3) + b'a\xffb')).read_string(), 'a\ufffdb')
 
     def test_frame_length_limit_matches_three_byte_protocol_limit(self):
         left, right = socket.socketpair()
@@ -278,6 +290,51 @@ class PacketProtocolTest(unittest.TestCase):
             worker.join(timeout=2)
             server.close()
 
+    def test_proxy_forwarded_address_is_accepted(self):
+        # BungeeCord's IP forwarding adds the player's address, UUID and profile to the handshake address,
+        # which Spigot and Paper accept up to 32767 characters instead of vanilla's 255.
+        properties = json.dumps([{'name': 'textures', 'value': 'e' * 600, 'signature': 's' * 684}])
+        address = '\0'.join(('localhost', '203.0.113.5', uuid.uuid4().hex, properties))
+        players = []
+        server = ProtocolServer('', 0, None, players.append)
+        conn, client = socket.socketpair()
+        self.addCleanup(client.close)
+        client.sendall(handshake(25565, 2, address=address) + frame(0x00, string('Proxied') + bytes(16)))
+        server._handle(conn, ('proxy', 0))
+        self.assertEqual(len(players), 1)
+        players[0].close()
+
+    def test_accept_continues_after_transient_errors(self):
+        listener = socket.create_server(('127.0.0.1', 0))
+        self.addCleanup(listener.close)
+        port = listener.getsockname()[1]
+        # A client that reset before it was accepted, then running out of file descriptors.
+        errors = [ConnectionAbortedError(errno.ECONNABORTED, 'Software caused connection abort'),
+                  OSError(errno.EMFILE, 'Too many open files')]
+
+        class FailingListener:
+            def fileno(self):
+                return listener.fileno()
+
+            def accept(self):
+                if errors: raise errors.pop(0)
+                return listener.accept()
+
+        server = ProtocolServer('', port, lambda protocol: json.dumps({'description': 'Up'}), None)
+        server.listener = FailingListener()
+        worker = threading.Thread(target=server._accept, args=(server.listener,))
+        output = io.StringIO()
+        with mock.patch('scripts.protocol_server.ACCEPT_RETRY_DELAY', 0.01), contextlib.redirect_stdout(output):
+            worker.start()
+            try:
+                self.assertEqual(status(port), 'Up')
+            finally:
+                server.listener = None
+                listener.close()
+                worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertIn('Too many open files', output.getvalue())
+
     def test_old_legacy_ping_formats(self):
         status = json.dumps({
             'version': {'name': 'Unknown', 'protocol': 0},
@@ -291,17 +348,17 @@ class PacketProtocolTest(unittest.TestCase):
         for ping, expected in expected_responses.items():
             with self.subTest(ping=ping):
                 server_sock, client = socket.socketpair()
-                client.settimeout(2)
+                # Pre-1.6 clients give up after 3 seconds.
+                client.settimeout(3)
                 server = ProtocolServer('', 0, lambda protocol: status, lambda player: None)
                 worker = threading.Thread(target=server._handle, args=(server_sock, ('local', 0)))
                 try:
-                    with mock.patch('scripts.protocol_server.CONNECTION_TIMEOUT', 0.05):
-                        worker.start()
-                        client.sendall(ping)
-                        self.assertEqual(recv_exact(client, 1), b'\xff')
-                        size = int.from_bytes(recv_exact(client, 2), 'big')
-                        response = recv_exact(client, size * 2).decode('utf-16-be')
-                        self.assertEqual(response, expected)
+                    worker.start()
+                    client.sendall(ping)
+                    self.assertEqual(recv_exact(client, 1), b'\xff')
+                    size = int.from_bytes(recv_exact(client, 2), 'big')
+                    response = recv_exact(client, size * 2).decode('utf-16-be')
+                    self.assertEqual(response, expected)
                 finally:
                     client.close()
                     worker.join(timeout=2)
@@ -574,6 +631,21 @@ class StarterTest(unittest.TestCase):
         self.assertTrue(wait_for(lambda: status(self.port) == SLEEPING_MOTD, 20), 'empty server was not stopped')
         self.assertIn('Server empty for 1 seconds, stopping it.', self.read('starter.log'))
 
+    def test_hidden_player_count_keeps_server_running(self):
+        self.start_starter(command='java FakeServer.java hidden-players', settings={'stop-when-empty-seconds': 1})
+        self.assertEqual(login(self.port, 'Hidden'), 'Welcome Hidden')
+        warning = 'The server does not report how many players are online, so it will not be stopped when empty.'
+        self.assertTrue(wait_for(lambda: warning in self.read('starter.log'), 10), 'missing player count was not reported')
+        self.assertEqual(status(self.port), 'Fake server')
+        self.assertNotIn('Traceback', self.read('starter.log'))
+        self.stop_server_and_wait_until_sleeping()
+
+    def test_undecodable_server_output(self):
+        self.start_starter(command='java FakeServer.java garbled', settings={'join-timeout-seconds': 15})
+        self.assertEqual(login(self.port, 'Garbled'), 'Welcome Garbled')
+        self.assertIn('<C> \\x81', self.read('starter.log'))
+        self.stop_server_and_wait_until_sleeping()
+
     def test_sleeping_status_mirrors_server(self):
         self.prepare('max-players=7\n')
         self.write('starter.properties', 'command=java FakeServer.java\nsleeping-motd=Line one\\nLine two \\u00A7aGreen\n')
@@ -591,6 +663,12 @@ class StarterTest(unittest.TestCase):
         # Minecraft only uses 64x64 icons, so other sizes are left out.
         self.write('server-icon.png', png(32, 32))
         self.assertNotIn('favicon', status_response(self.port))
+
+        # Clients reject server list responses over 32767 characters, so icons too large to fit are left out too.
+        self.write('server-icon.png', png(64, 64, 26000))
+        response = status_response(self.port)
+        self.assertNotIn('favicon', response)
+        self.assertEqual(response['description']['text'], 'Line one\nLine two \u00a7aGreen')
 
     def test_command_with_quoted_path(self):
         self.prepare()

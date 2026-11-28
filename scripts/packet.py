@@ -22,7 +22,8 @@ class PacketReader:
         size = self.read_varint()
         if size > max_characters * 3:
             raise ValueError("String exceeds its maximum encoded length")
-        text = self.read_bytes(size).decode("utf-8")
+        # Like Minecraft, replace invalid UTF-8 rather than rejecting it.
+        text = self.read_bytes(size).decode("utf-8", errors="replace")
         if len(text.encode("utf-16-be")) // 2 > max_characters:
             raise ValueError("String exceeds its maximum character count")
         return text
@@ -34,10 +35,10 @@ class PacketReader:
         for position in range(0, 35, 7):
             data = self.read_byte()
             current = data[0]
-            if position == 28 and current & 0xF0:
-                raise ValueError("VarInt is too big")
             value |= (current & SEGMENT_BITS) << position
             if current & CONTINUE_BIT == 0:
+                # Like Minecraft, drop the bits of a fifth byte that do not fit in 32.
+                value &= 0xFFFFFFFF
                 if value & 0x80000000: value -= 0x100000000
                 return value
 

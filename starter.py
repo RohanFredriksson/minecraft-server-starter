@@ -16,6 +16,8 @@ RUNNING = 2
 STOPPED = 3
 
 IDLE_CHECK_INTERVAL = 5
+# The longest server list response clients accept.
+MAX_STATUS_LENGTH = 32767
 CACHE_FILE = 'starter-cache.json'
 ICON_FILE = 'server-icon.png'
 
@@ -87,7 +89,13 @@ def status(client_protocol):
     }
     icon = server_icon()
     if icon: response["favicon"] = icon
-    return json.dumps(response)
+
+    # The JSON escapes any non-ASCII text, so its length is what clients count. Leave out icons that do not fit.
+    text = json.dumps(response)
+    if len(text) > MAX_STATUS_LENGTH:
+        response.pop("favicon", None)
+        text = json.dumps(response)
+    return text
 
 def on_login(player):
 
@@ -140,6 +148,7 @@ def on_ready():
 
         limit = settings['stop-when-empty-seconds']
         empty_since = None
+        warned = False
         while True:
 
             deadline = time.monotonic() + min(IDLE_CHECK_INTERVAL, limit)
@@ -152,9 +161,19 @@ def on_ready():
                 print('Could not ping the server for its idle status; will retry.')
                 continue
 
+            # The player count is optional, and some plugins hide it. Never mistake an unknown count for empty.
+            players = response.get('players')
+            online = players.get('online') if isinstance(players, dict) else None
+            if not isinstance(online, int):
+                if not warned:
+                    print('The server does not report how many players are online, so it will not be stopped when empty.')
+                    warned = True
+                empty_since = None
+                continue
+
             # Count from the first empty check, since players may have only just left.
             now = time.monotonic()
-            if response['players']['online'] > 0: empty_since = None
+            if online > 0: empty_since = None
             elif empty_since is None: empty_since = now
             elif now - empty_since >= limit:
                 print(f'Server empty for {limit} seconds, stopping it.')

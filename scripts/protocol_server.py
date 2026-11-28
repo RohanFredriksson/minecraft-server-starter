@@ -11,6 +11,10 @@ LOGIN = 2
 
 MAX_PACKET_SIZE = 2_097_151
 CONNECTION_TIMEOUT = 10
+# Pre-1.6 clients send only FE or FE 01, which can also begin a modern packet, and give up after 3 seconds.
+LEGACY_PING_TIMEOUT = 1
+# Like asyncio, pause after errors such as running out of file descriptors, which accepting again would repeat.
+ACCEPT_RETRY_DELAY = 1
 DISCONNECT_TIMEOUT = 1
 KEEPALIVE_INTERVAL = 5
 PLUGIN_RESPONSE_DRAIN_TIMEOUT = 3
@@ -245,13 +249,20 @@ class ProtocolServer:
         listener.close()
 
     def _accept(self, listener):
-        while True:
+        while self.listener is listener:
             try:
                 r, w, err = select.select((listener,), (), (), 0.5)
                 if not r: continue
                 conn, addr = listener.accept()
-            except (OSError, ValueError):
-                return
+            except ConnectionAbortedError:
+                # The client disconnected before it was accepted.
+                continue
+            except (OSError, ValueError) as error:
+                # Releasing the port closes the listener, which also ends up here.
+                if self.listener is not listener: return
+                print(f"Could not accept a connection: {error}")
+                time.sleep(ACCEPT_RETRY_DELAY)
+                continue
             threading.Thread(target=self._handle, args=(conn, addr), daemon=True).start()
 
     def _handle(self, conn, addr):
@@ -264,7 +275,7 @@ class ProtocolServer:
             first_byte = reader.peek_bytes(1, CONNECTION_TIMEOUT)
             if not first_byte: return
             if first_byte[0] == LEGACY_PING:
-                prefix = reader.peek_bytes(3, max(0, deadline - time.monotonic()))
+                prefix = reader.peek_bytes(3, LEGACY_PING_TIMEOUT)
                 # FE 01 can also be a modern packet's length; wait for its packet ID.
                 if prefix in (b'\xfe', b'\xfe\x01', b'\xfe\x01\xfa'):
                     self._serve_legacy_status(conn, extended=len(prefix) > 1)
@@ -276,7 +287,9 @@ class ProtocolServer:
             packet = PacketReader(handshake)
             if packet.id != 0: return
             protocol = packet.read_varint()
-            packet.read_string(255)
+            # Vanilla allows 255 characters, but proxies forward player details in the address,
+            # which Spigot and Paper accept up to the usual string limit.
+            packet.read_string()
             packet.read_unsigned_short()
             next_state = packet.read_varint()
 

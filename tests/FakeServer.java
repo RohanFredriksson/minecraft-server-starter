@@ -15,12 +15,13 @@ import java.util.Properties;
  * through NIO like the real server does, and implements just enough of the protocol to answer
  * status requests and to accept a login.
  *
- * Usage: java FakeServer.java [normal|slow|crash|paper]
+ * Usage: java FakeServer.java [normal|slow|crash|garbled|hidden-players|paper]
  */
 public class FakeServer {
 
     static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
     static boolean paperFormat;
+    static boolean hidePlayers;
     static String favicon = "";
 
     public static void main(String[] args) throws Exception {
@@ -32,6 +33,8 @@ public class FakeServer {
             if (mode.startsWith("-")) mode = mode.substring(1);
             if (mode.isEmpty()) mode = "normal";
         }
+        // Like servers whose plugins hide the player count from the server list.
+        hidePlayers = mode.equals("hidden-players");
 
         Properties properties = new Properties();
         try (Reader reader = new FileReader("server.properties")) { properties.load(reader); }
@@ -46,6 +49,12 @@ public class FakeServer {
         }
 
         Thread.sleep(mode.equals("slow") ? 6000 : 500);
+        if (mode.equals("garbled")) {
+            // A byte that neither UTF-8 nor Windows-1252 can decode. On Windows, Python reads the console as
+            // Windows-1252, while Java 18+ logs UTF-8, where Cyrillic and Japanese text contain this byte.
+            System.out.write(new byte[] {'<', 'C', '>', ' ', (byte) 0x81, '\n'});
+            System.out.flush();
+        }
         log("INFO", "Starting minecraft server version Fake");
 
         if (mode.equals("crash")) {
@@ -118,7 +127,7 @@ public class FakeServer {
             if (next == 1) {
                 readPacket(in, 0x00);
                 String status = "{\"version\":{\"name\":\"Fake\",\"protocol\":767},"
-                    + "\"players\":{\"max\":20,\"online\":0,\"sample\":[]},"
+                    + (hidePlayers ? "" : "\"players\":{\"max\":20,\"online\":0,\"sample\":[]},")
                     + "\"description\":{\"text\":\"Fake server\"}" + favicon + "}";
                 writePacket(out, 0x00, string(status));
                 DataInputStream ping = readPacket(in, 0x01);
